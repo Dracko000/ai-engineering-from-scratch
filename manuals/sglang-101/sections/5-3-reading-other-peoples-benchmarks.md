@@ -78,6 +78,7 @@ Field reports tell you which mechanism to test. We tested them on a DGX Spark wi
 | L4 | SGLang 0.5.22 against vLLM 0.31.0, same pool, 64 users | 257 against 241 tok/s, P99 ITL 114 against 1,363 ms, median TTFT 18,356 against 10,953 ms, [below](#s-reading-other-peoples-benchmarks) | two different admission choices at a full pool |
 | L4 | the same pair on a 4,096-token shared prompt | 88.4 against 86.8 tok/s, median TTFT 474 against 375 ms, [below](#s-reading-other-peoples-benchmarks) | two prefix caches that both hit |
 | L4 | the same pair at 4 requests per second, Poisson arrivals | 257.5 against 286.6 tok/s, P99 TPOT 127 against 187 ms, [below](#s-reading-other-peoples-benchmarks) | the same admission choice under a fixed rate |
+| L4 | the same pair with mixed prompt lengths at 16 users | 159.6 against 169.6 tok/s, P99 ITL 363 against 191 ms, [below](#s-reading-other-peoples-benchmarks) | how each engine mixes prefill into the stream |
 | L4 pair | `--tp-size 2` with one shared card | refused at startup, [section 6.1](#s-tp-size-dp-size-and-attn-dp-size) | the memory balance check |
 | L4 pair | prefill and decode split over TCP | every request after minute three came back empty with HTTP 200, [section 6.3](#s-prefill-decode-disaggregation) | the transfer session failed and did not recover |
 
@@ -224,7 +225,33 @@ At 4 per second, vLLM gave 286.6 against 257.5 tok/s, 11 percent more and outsid
 
 The clock does not explain the gap at 4. The vLLM runs had the lower median clock, 1,245 against 1,350 MHz. At 8 per second the throughput ranges overlapped. At 16 per second, every run of both engines stayed under 1,000 MHz after three tries, so we do not compare that row.
 
-This is one model, one GPU, and three workloads. It agrees with the field reports on the main point: on a dense model with unique prompts, the engines tie on throughput. It adds the part that a throughput chart hides. When the pool is full, you choose between a fast first token and a smooth stream, and the two engines chose differently by default.
+### The same pair on waves
+
+The last workload is the one from [section 5.1](#s-sglang-benchmark-serving) that makes requests arrive in waves. Each run sent 64 prompts of 512 tokens with 128 tokens of output, at a cap of 16 users. Only `--random-range-ratio` changed. At 1.0 every prompt has the same length, so requests finish together and their replacements arrive together. At 0.5 and 0.0 the lengths are mixed, so requests arrive one by one.
+
+```listing
+title: vLLM in the middle of a wave
+source: capture/gpu/out-l4/server-h2h-waves-vllm.log
+lang: text
+note: The vLLM pool at startup, and one stats line with 16 requests running.
+---
+INFO 10-18 18:38:07 [kv_cache_utils.py:2464] GPU KV cache size: 24,096 tokens, Maximum concurrency for 8,192 tokens per request: 2.94x
+INFO 10-18 19:14:22 [loggers.py:320] Engine 000: Avg prompt throughput: 960.0 tokens/s, Avg generation throughput: 187.3 tokens/s, Running: 16 reqs, Waiting: 0 reqs, GPU KV cache usage: 22.6%, Prefix cache hit rate: 8.5%
+```
+
+| Length ratio | Output tok/s, SGLang / vLLM | Median TTFT, SGLang / vLLM | Median TPOT, SGLang / vLLM | P99 ITL, SGLang / vLLM |
+|---|---|---|---|---|
+| 1.0, fixed lengths | 182.3 / 181.7 | 1,775 / 1,499 ms | 74.7 / 76.8 ms | 81 / 502 ms |
+| 0.5, mixed | 159.6 / 169.6 | 325 / 353 ms | 87.8 / 81.4 ms | 363 / 191 ms |
+| 0.0, mixed | 158.2 / 174.4 | 283 / 284 ms | 86.7 / 75.0 ms | 302 / 202 ms |
+
+**We measured** a different winner for each traffic shape. With fixed lengths, the two engines tied on throughput. They made the same trade as at a full pool. vLLM gave the first token sooner, 1,499 against 1,775 ms, outside the seed spread. SGLang kept the stream smooth, with a P99 ITL of 81 against 502 ms.
+
+With mixed lengths, vLLM led. At a ratio of 0.5 it gave 169.6 against 159.6 tok/s, 6 percent more and outside the seed spread. Its median time per token was 81.4 against 87.8 ms, and its P99 ITL was 191 against 363 ms. At 0.0 the throughput ranges overlapped, and vLLM still had the lower time per token and the lower P99 ITL. Every median clock was 1,410 MHz or higher.
+
+Our reading: when new prompts arrive one by one, each prefill shares a step with the running decodes. The vLLM server split that work so that the stream stalled less. We did not test a mixed chunk on SGLang for this workload.
+
+This is one model, one GPU, and four workloads. It agrees with the field reports on the main point: on a dense model with unique prompts, the engines tie on throughput. It adds the part that a throughput chart hides. When the pool is full, you choose between a fast first token and a smooth stream, and the two engines chose differently by default.
 
 ## Our position
 
@@ -255,4 +282,4 @@ Above all, do not import a result. Run the sweep from [section 5.1](#s-sglang-be
 - Use `--cuda-graph-max-bs-decode` at v0.5.22, because the old flag is ambiguous.
 ```
 
-Sources: python/sglang/srt/arg_groups/memory_hook.py (GPU memory tiers), python/sglang/srt/arg_groups/fields/exec_.py (cuda_graph_max_bs_decode), python/sglang/srt/arg_groups/fields/schedule.py, all at v0.5.22 (baa9befa); the field reports linked in the text, fetched 2026-10-16; aimultiple.com/inference-engines; deepinfra.com/blog/vllm-vs-sglang; lmsys.org/blog/2024-07-25-sglang-llama3; inferencex.semianalysis.com/blog/mi355x-deepseek-v4-pro-sglang-110x-in-26-days. capture/gpu/out-l4/server-h2h-sglang.log, capture/gpu/out-l4/server-h2h-vllm.log, capture/gpu/out-l4/server-h2h-prefix-sglang.log, capture/gpu/out-l4/server-h2h-prefix-vllm.log, capture/gpu/out-l4/server-h2h-rate-sglang.log, capture/gpu/out-l4/server-h2h-rate-vllm.log, capture/gpu/summary/l4.json, capture/gpu/sweep.py (vllm and sglang-h2h configs), capture/gpu/incidents/l4-vllm-flashinfer-jit.txt.
+Sources: python/sglang/srt/arg_groups/memory_hook.py (GPU memory tiers), python/sglang/srt/arg_groups/fields/exec_.py (cuda_graph_max_bs_decode), python/sglang/srt/arg_groups/fields/schedule.py, all at v0.5.22 (baa9befa); the field reports linked in the text, fetched 2026-10-16; aimultiple.com/inference-engines; deepinfra.com/blog/vllm-vs-sglang; lmsys.org/blog/2024-07-25-sglang-llama3; inferencex.semianalysis.com/blog/mi355x-deepseek-v4-pro-sglang-110x-in-26-days. capture/gpu/out-l4/server-h2h-sglang.log, capture/gpu/out-l4/server-h2h-vllm.log, capture/gpu/out-l4/server-h2h-prefix-sglang.log, capture/gpu/out-l4/server-h2h-prefix-vllm.log, capture/gpu/out-l4/server-h2h-rate-sglang.log, capture/gpu/out-l4/server-h2h-rate-vllm.log, capture/gpu/out-l4/server-h2h-waves-vllm.log, capture/gpu/summary/l4.json, capture/gpu/sweep.py (vllm and sglang-h2h configs), capture/gpu/incidents/l4-vllm-flashinfer-jit.txt.
