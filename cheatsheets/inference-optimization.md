@@ -1,9 +1,11 @@
 ---
 id: inference-optimization
 title: Inference Optimization: KV Cache, Quantization, Batching
+code: IO
 subtitle: Size the KV cache, batch continuously, pick a quantization format, and measure what users feel.
 hue: 180
 sources: phases/07-transformers-deep-dive/12-kv-cache-flash-attention, phases/10-llms-from-scratch/11-quantization, phases/10-llms-from-scratch/12-inference-optimization, phases/17-infrastructure-and-production/04-vllm-serving-internals, phases/17-infrastructure-and-production/05-eagle3-speculative-decoding, phases/17-infrastructure-and-production/08-inference-metrics-goodput, phases/17-infrastructure-and-production/09-production-quantization
+source_hash: 5835d645afd89270
 ---
 
 ## Tasks

@@ -804,6 +804,72 @@
   text-transform: uppercase;
 }
 
+.cs-tile-kind {
+  margin-right: 8px;
+  padding: 0 4px;
+  border: 1px solid currentColor;
+}
+
+.cs-tile[hidden],
+.cs-track[hidden] {
+  display: none;
+}
+
+.cs-filters {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.cs-filter-kinds {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.cs-filter-kinds button {
+  min-height: 36px;
+  padding: 0 10px;
+  border: 1.5px solid var(--ink);
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 0.78em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.cs-filter-kinds button[aria-pressed="true"] {
+  background: var(--ink);
+  color: var(--bg);
+}
+
+.cs-filter-kinds span,
+.cs-track-nav span,
+.cs-count {
+  opacity: 0.7;
+}
+
+.cs-track-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  font-family: var(--font-mono);
+  font-size: 0.74em;
+  text-transform: uppercase;
+}
+
+.cs-track-nav a {
+  color: var(--ink);
+}
+
+.cs-filter-count {
+  min-height: 1.2em;
+  margin: 0;
+  color: var(--ink-mute);
+  font-size: 0.72em;
+}
+
 .cs-by-phase {
   margin: 0;
   padding: 0;

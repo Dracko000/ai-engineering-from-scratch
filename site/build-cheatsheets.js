@@ -8,6 +8,7 @@ const markdown = require('./lesson-markdown');
 const { phaseSlug } = require('../lib/hub-routes');
 const { SITE_HEADER } = require('./build-hubs');
 const { versionHtml } = require('./version-assets');
+const topicMap = require('./cheatsheet-topics');
 
 const ORIGIN = 'https://aiengineeringfromscratch.com';
 const REPO = 'https://github.com/rohitg00/ai-engineering-from-scratch';
@@ -22,6 +23,22 @@ const COLUMNS = 4;
 const MAX_PAGES = 2;
 const PAGE_BUDGETS = [870, 930];
 const MAX_SUBTITLE = 120;
+const KIND_LABELS = { concept: 'Concepts', commands: 'Commands and APIs', comparison: 'Comparisons', debugging: 'Debugging', manual: 'Manuals', project: 'Projects' };
+const TRACKS = [
+  ['foundations', 'Foundations', ['00', '01', '02', '03']],
+  ['vision-audio', 'Vision and audio', ['04', '06']],
+  ['language', 'Language and transformers', ['05', '07', '10']],
+  ['generative', 'Generative and multimodal', ['08', '12']],
+  ['rl-safety', 'RL, safety and alignment', ['09', '18']],
+  ['llm-engineering', 'LLM engineering', ['11']],
+  ['tools', 'Tools and protocols', ['13']],
+  ['agents', 'Agents and autonomy', ['14', '15', '16']],
+  ['production', 'Production and infrastructure', ['17']],
+  ['capstones', 'Capstones', ['19']],
+  ['manuals', 'Manuals', []],
+  ['projects', 'Projects', []],
+];
+const SEARCH_DETAIL = 72;
 const FONT_LINK = 'https://fonts.googleapis.com/css2?family=VT323&family=Source+Serif+4:ital,opsz,wght@0,8..60,400..700;1,8..60,400..700&family=JetBrains+Mono:wght@400;500;700&display=swap';
 const THEME_SCRIPT = "(function(){var r=document.documentElement,s='';try{s=localStorage.getItem('theme')||'';}catch(_){}r.setAttribute('data-theme',s||(window.matchMedia&&matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'));function i(){var e=document.getElementById('themeIcon');if(e)e.textContent=r.getAttribute('data-theme')==='light'?'N':'D';}document.addEventListener('DOMContentLoaded',function(){i();var b=document.getElementById('themeToggle');if(b)b.addEventListener('click',function(){var n=r.getAttribute('data-theme')==='light'?'dark':'light';r.setAttribute('data-theme',n);try{localStorage.setItem('theme',n);}catch(_){}i();});});})();";
 const HEAD_ASSETS = '<link rel="stylesheet" href="/style.css">\n<link rel="stylesheet" href="/cheatsheets.css">';
@@ -106,7 +123,7 @@ function parseFrontMatter(lines, errors) {
   }
   let end = 1;
   for (; end < lines.length && lines[end] !== '---'; end++) {
-    const match = /^([a-z]+):\s*(.*)$/.exec(lines[end]);
+    const match = /^([a-z_]+):\s*(.*)$/.exec(lines[end]);
     if (match) meta[match[1]] = match[2].trim();
     else if (lines[end].trim()) errors.push(`front matter line ${end + 1} is not "key: value"`);
   }
@@ -278,6 +295,7 @@ function parseTopic(text, file = '') {
     hue: Number.isFinite(hue) ? hue : 222,
     code: meta.code || initials(meta.title || ''),
     sources: splitList(meta.sources),
+    sourceHash: meta.source_hash || '',
     blocks: parsed,
     errors,
     hash: sha(text).slice(0, 12),
@@ -606,18 +624,22 @@ function topicCounts(topic) {
   return { blocks: topic.blocks.length, rows, diagrams };
 }
 
+function tileHtml(topic) {
+  const counts = topicCounts(topic);
+  return `<li class="cs-tile" data-kind="${topic.kind}" style="--h:${topic.hue}"><a href="${topic.href}"><span class="cs-code" aria-hidden="true">${escapeHtml(topic.code)}</span><span class="cs-tile-name">${escapeHtml(topic.title)}</span><span class="cs-tile-sub">${escapeHtml(plain(topic.subtitle))}</span><span class="cs-tile-meta"><span class="cs-tile-kind">${KIND_LABELS[topic.kind]}</span>${counts.rows} rows · ${counts.diagrams} diagrams</span></a></li>`;
+}
+
 function indexMain(topics, year, phases) {
-  const search = `<div class="cs-search" role="search"><label for="cs-q" class="cs-kicker">Search tasks, commands and terms</label><input id="cs-q" type="search" autocomplete="off" spellcheck="false" placeholder="mem fraction, causal mask, budget" data-index="${BASE}/search.json"><p class="cs-search-count" aria-live="polite"></p><ol class="cs-results" hidden></ol></div>`;
-  const tiles = topics.map(topic => {
-    const counts = topicCounts(topic);
-    return `<li class="cs-tile" style="--h:${topic.hue}"><a href="${topic.href}"><span class="cs-code" aria-hidden="true">${escapeHtml(topic.code)}</span><span class="cs-tile-name">${escapeHtml(topic.title)}</span><span class="cs-tile-sub">${escapeHtml(plain(topic.subtitle))}</span><span class="cs-tile-meta">${counts.rows} rows · ${counts.diagrams} diagrams · ${counts.blocks} blocks</span></a></li>`;
-  }).join('');
+  const search = `<div class="cs-search" role="search"><label for="cs-q" class="cs-kicker">Search topics, tasks, commands and terms</label><input id="cs-q" type="search" autocomplete="off" spellcheck="false" placeholder="mem fraction, causal mask, budget" data-index="${BASE}/search.json"><p class="cs-search-count" aria-live="polite"></p><ol class="cs-results" hidden></ol></div>`;
+  const tracks = TRACKS.map(([slug, label]) => ({ slug, label, topics: topics.filter(topic => topic.track === slug).sort((a, b) => a.title.localeCompare(b.title)) })).filter(track => track.topics.length);
+  const kinds = Object.keys(KIND_LABELS).map(kind => [kind, topics.filter(topic => topic.kind === kind).length]).filter(([, count]) => count);
+  const filters = `<div class="cs-filters"><div class="cs-filter-kinds" role="group" aria-label="Show one kind of sheet"><button type="button" data-kind="" aria-pressed="true">All <span>${topics.length}</span></button>${kinds.map(([kind, count]) => `<button type="button" data-kind="${kind}" aria-pressed="false">${KIND_LABELS[kind]} <span>${count}</span></button>`).join('')}</div><nav class="cs-track-nav" aria-label="Tracks">${tracks.map(track => `<a href="${BASE}#t-${track.slug}">${escapeHtml(track.label)} <span>${track.topics.length}</span></a>`).join('')}</nav><p class="cs-filter-count" aria-live="polite"></p></div>`;
+  const sections = tracks.map(track => `<section class="cs-index-section cs-track" id="t-${track.slug}" aria-labelledby="h-${track.slug}"><h2 id="h-${track.slug}">${escapeHtml(track.label)} <span class="cs-count">${track.topics.length}</span></h2><ol class="cs-tiles">${track.topics.map(tileHtml).join('')}</ol></section>`).join('');
   const byPhase = phases.filter(phase => phase.topics.length).map(phase => `<li id="p-${phase.slug}"><a href="/phase/${phase.slug}">${escapeHtml(phase.label)}</a><span>${phase.topics.map(topic => `<a href="${topic.href}">${escapeHtml(topic.title)}</a>`).join(', ')}</span></li>`).join('');
-  const head = `<header class="cs-index-head"><p class="cs-kicker">AI Engineering from Scratch</p><h1>Cheat sheets</h1><p class="cs-sub">One poster for each topic. Each poster holds the tasks, commands, code, diagrams, defaults and fixes that you use while you work. Every fact comes from a lesson or a manual of this course.</p>${search}</header>`;
-  const list = `<section class="cs-index-section" aria-labelledby="topics"><h2 id="topics">Topics</h2><ol class="cs-tiles">${tiles}</ol></section>`;
+  const head = `<header class="cs-index-head"><p class="cs-kicker">AI Engineering from Scratch</p><h1>Cheat sheets</h1><p class="cs-sub">${topics.length} posters. Each poster holds the tasks, commands, code, diagrams, defaults and fixes that you use while you work. Every fact comes from a lesson, a manual or a project of this course.</p>${search}${filters}</header>`;
   const phaseList = byPhase ? `<section class="cs-index-section" aria-labelledby="by-phase"><h2 id="by-phase">By phase</h2><ul class="cs-by-phase">${byPhase}</ul></section>` : '';
   const how = '<section class="cs-index-section" aria-labelledby="how"><h2 id="how">How to use them</h2><ul class="cs-tips"><li>Each colour means one kind of block. Blue blocks are tasks and commands. Red blocks are fixes. The key is at the top of each poster.</li><li>Click a command to copy it. Replace each value in angle brackets, such as <code>&lt;model&gt;</code>.</li><li>Each block names the lesson or manual section that its facts come from. Open it when you need the reason.</li><li>Print a poster on one or two landscape pages. It fits A4 and Letter paper.</li></ul></section>';
-  return `<main id="main" class="cs-page cs-index">${head}${list}${phaseList}${how}<footer class="cs-foot"><p class="cs-stamp"><span>aiengineeringfromscratch.com${BASE}</span><span>${copyLine(year)}</span></p></footer></main>`;
+  return `<main id="main" class="cs-page cs-index">${head}${sections}${phaseList}${how}<footer class="cs-foot"><p class="cs-stamp"><span>aiengineeringfromscratch.com${BASE}</span><span>${copyLine(year)}</span></p></footer></main>`;
 }
 
 function shell({ title, description, href, card, main, bodyClass, hue = 222 }, assets) {
@@ -677,11 +699,28 @@ function topicFiles(root) {
   return fs.readdirSync(dir).filter(name => name.endsWith('.md') && name !== 'AUTHORING.md' && name !== 'README.md').sort().map(name => path.join(dir, name));
 }
 
+function trackOf(topic) {
+  if (topic.kind === 'manual') return 'manuals';
+  if (topic.kind === 'project') return 'projects';
+  const counts = new Map();
+  for (const source of topic.sources) {
+    const phase = /^phases\/(\d{2})-/.exec(source);
+    if (phase) counts.set(phase[1], (counts.get(phase[1]) || 0) + 1);
+  }
+  const best = Array.from(counts).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0];
+  if (!best) return topic.sources.some(source => source.startsWith('manuals/')) ? 'manuals' : 'projects';
+  return (TRACKS.find(([, , phases]) => phases.includes(best[0])) || TRACKS[0])[0];
+}
+
 function loadTopics(root = REPO_ROOT) {
+  const map = topicMap.loadTopicMap(root);
+  const kinds = new Map(map.topics.map(entry => [entry.id, entry.kind]));
   return topicFiles(root).map(file => {
     const topic = parseTopic(fs.readFileSync(file, 'utf8'), file);
     topic.file = path.relative(root, file);
     topic.href = `${BASE}/${topic.id}`;
+    topic.kind = kinds.get(topic.id) || 'concept';
+    topic.track = trackOf(topic);
     return topic;
   });
 }
@@ -729,16 +768,22 @@ function phaseList(root, map) {
   });
 }
 
+function clip(text) {
+  const value = plain(text);
+  return value.length > SEARCH_DETAIL ? `${value.slice(0, SEARCH_DETAIL - 1)}…` : value;
+}
+
 function searchIndex(topics) {
   return topics.map(topic => ({
     i: topic.id,
     t: topic.title,
     c: topic.code,
     h: topic.hue,
+    k: topic.kind,
     r: topic.blocks.flatMap(block => {
-      if (TABLE_SHAPES[block.type]) return block.rows.map(row => [plain(row[0]), plain(row[1]), block.id]);
-      if (block.type === 'concepts' || block.type === 'glossary') return block.items.map(item => [plain(item.lead), plain(item.text), block.id]);
-      return [[plain(block.title), '', block.id]];
+      if (TABLE_SHAPES[block.type]) return block.rows.map(row => [clip(row[0]), clip(row[1]), block.id]);
+      if (block.type === 'concepts' || block.type === 'glossary') return block.items.map(item => [clip(item.lead), clip(item.text), block.id]);
+      return [[clip(block.title), '', block.id]];
     }),
   }));
 }
@@ -998,6 +1043,11 @@ function main(argv) {
     console.log(`Wrote the print edition of ${built.topics.length} topic posters to ${value('--print')}/print.html`);
     return 0;
   }
+  if (flag('--status')) {
+    const topics = loadTopics();
+    console.log(JSON.stringify(topicMap.mapStatus(topicMap.loadTopicMap(REPO_ROOT), topics, REPO_ROOT), null, 2));
+    return 0;
+  }
   if (flag('--check')) {
     const invalid = topicErrors(loadTopics());
     if (invalid.length) {
@@ -1016,7 +1066,13 @@ function main(argv) {
     const codes = first.topics.map(topic => topic.code);
     if (new Set(codes).size !== codes.length) problems.push('two topics share a code');
     for (const item of checkLinks(first)) problems.push(`broken link on ${item.page}: ${item.href}`);
+    const map = topicMap.loadTopicMap(REPO_ROOT);
+    problems.push(...topicMap.mapProblems(map, first.topics, REPO_ROOT));
+    const status = topicMap.mapStatus(map, first.topics, REPO_ROOT);
     console.log(`Checked ${first.topics.length} cheat sheet topics (${first.topics.reduce((sum, topic) => sum + topic.blocks.length, 0)} blocks).`);
+    console.log(`Coverage: ${status.coverage.covered} of ${status.coverage.total} lessons, manuals and projects are in ${map.topics.length} topics (${status.coverage.lessons} of ${status.coverage.lessonTotal} lessons).`);
+    if (status.missing.length) console.log(`${status.missing.length} topics have no sheet yet: ${status.missing.join(', ')}. The cheat sheet generate workflow writes them.`);
+    if (status.stale.length) console.log(`${status.stale.length} sheets are older than their sources: ${status.stale.join(', ')}.`);
     for (const problem of problems) console.error(`  ${problem}`);
     return problems.length ? 1 : 0;
   }
@@ -1027,4 +1083,4 @@ function main(argv) {
 
 if (require.main === module) process.exitCode = main(process.argv.slice(2));
 
-module.exports = { parseTopic, loadTopics, buildCheatsheets, writeCheatsheets, writePrint, printHtml, prerenderMath, checkTopic, checkLinks, coverage, layout, factTokens, blockFacts, architectureSvg, flowSvg, TYPES };
+module.exports = { trackOf, parseTopic, loadTopics, buildCheatsheets, writeCheatsheets, writePrint, printHtml, prerenderMath, checkTopic, checkLinks, coverage, layout, factTokens, blockFacts, architectureSvg, flowSvg, TYPES };

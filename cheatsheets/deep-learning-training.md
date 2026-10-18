@@ -1,9 +1,11 @@
 ---
 id: deep-learning-training
 title: Training Neural Networks
+code: TN
 subtitle: Pick the optimizer, init, normalization, regularization and schedule. Then debug the run when the loss misbehaves.
 hue: 270
 sources: phases/03-deep-learning-core/03-backpropagation, phases/03-deep-learning-core/04-activation-functions, phases/03-deep-learning-core/06-optimizers, phases/03-deep-learning-core/07-regularization, phases/03-deep-learning-core/08-weight-initialization, phases/03-deep-learning-core/09-learning-rate-schedules, phases/03-deep-learning-core/13-debugging-neural-networks
+source_hash: 1b7829256d417a05
 ---
 
 ## One AdamW step

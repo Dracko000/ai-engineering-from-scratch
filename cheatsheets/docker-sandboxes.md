@@ -1,9 +1,11 @@
 ---
 id: docker-sandboxes
 title: Docker Sandboxes for Agents
+code: DS
 subtitle: Run an agent in a microVM, control its network and keys, get its commits back. sbx 0.47.0, docker-agent 1.149.0.
 hue: 210
 sources: manuals/docker-sandboxes-101
+source_hash: 27c0ba82cd494898
 ---
 
 ## What runs where

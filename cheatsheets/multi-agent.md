@@ -1,9 +1,11 @@
 ---
 id: multi-agent
 title: Multi-Agent Systems
+code: MA
 subtitle: Agents, handoffs, shared state and orchestrators. Pick a pattern, vote, checkpoint and fix the known failures.
 hue: 290
 sources: phases/16-multi-agent-and-swarms/01-why-multi-agent, phases/16-multi-agent-and-swarms/04-primitive-model, phases/16-multi-agent-and-swarms/05-supervisor-orchestrator-pattern, phases/16-multi-agent-and-swarms/06-hierarchical-architecture, phases/16-multi-agent-and-swarms/10-group-chat-speaker-selection, phases/16-multi-agent-and-swarms/11-handoffs-and-routines, phases/16-multi-agent-and-swarms/13-shared-memory-blackboard, phases/16-multi-agent-and-swarms/14-consensus-and-bft, phases/16-multi-agent-and-swarms/15-voting-debate-topology, phases/16-multi-agent-and-swarms/22-production-scaling-queues-checkpoints, phases/16-multi-agent-and-swarms/23-failure-modes-mast-groupthink, phases/16-multi-agent-and-swarms/24-evaluation-coordination-benchmarks
+source_hash: a1efdb13bbf6ade7
 ---
 
 ## Four primitives

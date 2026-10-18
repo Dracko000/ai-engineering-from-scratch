@@ -1,9 +1,11 @@
 ---
 id: embeddings-vector-search
 title: Embeddings and Vector Search
+code: EV
 subtitle: Encode text, pick a metric, size the vectors, choose an index and fix bad recall. Python, NumPy and FAISS.
 hue: 170
 sources: phases/11-llm-engineering/04-embeddings, phases/05-nlp-foundations-to-advanced/22-embedding-models-deep-dive, phases/05-nlp-foundations-to-advanced/03-word-embeddings-word2vec, phases/05-nlp-foundations-to-advanced/04-glove-fasttext-subword, phases/05-nlp-foundations-to-advanced/14-information-retrieval-search, phases/01-math-foundations/14-norms-and-distances, phases/02-ml-fundamentals/06-knn-and-distances, phases/04-computer-vision/20-image-retrieval-metric, phases/19-capstone-projects/65-hybrid-retrieval-bm25-dense
+source_hash: 16665e2c8ff93f4e
 ---
 
 ## Retrieve, then rerank

@@ -1,9 +1,11 @@
 ---
 id: llm-evaluation
 title: Evaluating LLMs
+code: EL
 subtitle: Specify tasks, score them, judge with a rubric, calibrate, rank with intervals and test long context.
 hue: 80
 sources: phases/10-llms-from-scratch/10-evaluation, phases/11-llm-engineering/10-evaluation, phases/05-nlp-foundations-to-advanced/27-llm-evaluation-frameworks, phases/05-nlp-foundations-to-advanced/28-long-context-evaluation, phases/19-capstone-projects/27-eval-harness-fixture-tasks, phases/19-capstone-projects/41-eval-pipeline, phases/19-capstone-projects/49-lm-eval-harness, phases/19-capstone-projects/70-task-spec-format, phases/19-capstone-projects/71-classical-metrics, phases/19-capstone-projects/72-code-exec-metric, phases/19-capstone-projects/73-perplexity-calibration, phases/19-capstone-projects/74-leaderboard-aggregation, phases/19-capstone-projects/75-end-to-end-eval-runner
+source_hash: f41ffc5fe2795abd
 ---
 
 ## End-to-end eval runner

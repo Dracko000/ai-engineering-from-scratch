@@ -1,9 +1,11 @@
 ---
 id: lora-fine-tuning
 title: Fine-Tuning with LoRA
+code: FT
 subtitle: Add LoRA adapters, load a 4-bit base for QLoRA, mask SFT labels, train, merge and debug. PyTorch, PEFT and bitsandbytes.
 hue: 310
 sources: phases/11-llm-engineering/08-fine-tuning-lora, phases/10-llms-from-scratch/06-instruction-tuning-sft, phases/19-capstone-projects/38-classifier-finetuning, phases/19-capstone-projects/39-instruction-tuning-sft
+source_hash: e5edb281987b0b15
 ---
 
 ## Tasks

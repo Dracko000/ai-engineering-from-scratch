@@ -1,9 +1,11 @@
 ---
 id: computer-vision
 title: Computer Vision
+code: CV
 subtitle: Preprocess, convolve, classify, fine-tune, detect, segment and patchify images. PyTorch and NumPy from the lessons.
 hue: 5
 sources: phases/04-computer-vision/01-image-fundamentals, phases/04-computer-vision/02-convolutions-from-scratch, phases/04-computer-vision/03-cnns-lenet-to-resnet, phases/04-computer-vision/04-image-classification, phases/04-computer-vision/05-transfer-learning, phases/04-computer-vision/06-object-detection-yolo, phases/04-computer-vision/07-semantic-segmentation-unet, phases/04-computer-vision/08-instance-segmentation-mask-rcnn, phases/04-computer-vision/14-vision-transformers
+source_hash: 39d79137b3c784bf
 ---
 
 ## Mask R-CNN pipeline

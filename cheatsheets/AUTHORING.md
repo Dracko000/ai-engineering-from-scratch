@@ -25,7 +25,7 @@ from: manuals/sglang-101/sections/2-1-sglang-serve-and-the-three-processes.md
     ```
 ```
 
-The front matter has five keys. `id`, `title` and `subtitle` are text. The subtitle has a limit of 120 characters, so that it fits on one line. `hue` is a number from 0 to 359. It sets the colour of the poster. `sources` lists the lessons and manuals that the topic covers. Lesson pages link to the sheet from these paths. The optional key `code` sets the two letters on the tile. The default is the initials of the title. Each topic needs a different code.
+The front matter has five required keys. `id`, `title` and `subtitle` are text. The subtitle has a limit of 120 characters, so that it fits on one line. `hue` is a number from 0 to 359. It sets the colour of the poster. `sources` lists the lessons, manuals and projects that the topic covers. Lesson pages link to the sheet from these paths. The optional key `code` sets the two letters on the tile. The default is the initials of the title. Each topic needs a different code. The key `source_hash` records the source files that the sheet was written from. The scripts set `code` and `source_hash` for you.
 
 Each block starts with a `## ` heading. The heading is the label on the coloured bar. Lines of `key: value` follow the heading. A blank line ends them. The body comes after the blank line.
 
@@ -72,3 +72,13 @@ Every fact must come from a file in the `from` list of its block: a lesson, a le
 ## Prose
 
 Use short sentences in Simplified Technical English. Use one line for each row or bullet. Do not use dashes, semicolons or figurative words. A cheat sheet tells the reader what to type and what to expect. It does not tell a story.
+
+## The coverage map
+
+`cheatsheets/topics.yaml` lists every topic with its `id`, `title`, `kind` and `sources`. The kind is `concept`, `commands`, `comparison`, `debugging`, `manual` or `project`. Every lesson in `phases/`, every manual and every project must be a source of at least one topic. `node site/build-cheatsheets.js --check` fails when one is not. The `title` and `sources` of a sheet must match its entry in the map.
+
+When you add a lesson, add it to a topic in the map. When you change the sources of a topic, run `node scripts/cheatsheets/generate.js --stamp <id>` to copy the new list and hash into the sheet.
+
+## Stale and missing sheets
+
+`node site/build-cheatsheets.js --status` lists the topics that have no sheet and the sheets whose source files changed after they were written. The workflow `.github/workflows/cheatsheets-generate.yml` writes these sheets with `scripts/cheatsheets/generate.js` and opens a pull request for review. To write one sheet on your machine, set `ANTHROPIC_API_KEY`, install `@anthropic-ai/sdk` and run `node scripts/cheatsheets/generate.js <id>`. Add `--model opus` for the larger model. The script runs the fact check on each reply. It sends the problems back to the model two times at most, and it writes nothing for a topic that still fails.

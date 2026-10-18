@@ -1,9 +1,11 @@
 ---
 id: sglang-serving
 title: LLM Serving with SGLang
+code: LS
 subtitle: Start, query, size, measure and fix an SGLang server. Pinned to SGLang 0.5.22.
 hue: 200
 sources: manuals/sglang-101
+source_hash: e05476a2a1f9abb9
 ---
 
 ## Tasks

@@ -1,9 +1,11 @@
 ---
 id: prompt-engineering
 title: Prompt Engineering
+code: PE
 subtitle: Write the prompt, add examples and reasoning, vote, and budget the context window. Python from the lessons.
 hue: 230
 sources: phases/11-llm-engineering/01-prompt-engineering, phases/11-llm-engineering/02-few-shot-cot, phases/11-llm-engineering/05-context-engineering, phases/11-llm-engineering/15-prompt-caching
+source_hash: 3156fd874b6b7119
 ---
 
 ## What goes in the window

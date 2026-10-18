@@ -1,9 +1,11 @@
 ---
 id: a2a
 title: A2A Protocol
+code: AP
 subtitle: Discover an agent, send it work, follow the task, read its errors. Pinned to A2A 1.0.1.
 hue: 140
 sources: manuals/a2a-101
+source_hash: 2bf16b666a27a172
 ---
 
 ## Tasks over JSON-RPC

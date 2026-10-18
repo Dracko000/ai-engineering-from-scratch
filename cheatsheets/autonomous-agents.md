@@ -1,9 +1,11 @@
 ---
 id: autonomous-agents
 title: Autonomous Agents and Permissions
+code: AA
 subtitle: Run an agent unattended with limits. Permission modes, budgets, kill switches, durable execution, approvals, rollback.
 hue: 330
 sources: phases/15-autonomous-systems/01-long-horizon-agents, phases/15-autonomous-systems/08-bounded-self-improvement, phases/15-autonomous-systems/10-claude-code-permission-modes, phases/15-autonomous-systems/12-durable-execution, phases/15-autonomous-systems/13-cost-governors, phases/15-autonomous-systems/14-kill-switches-canaries, phases/15-autonomous-systems/15-propose-then-commit, phases/15-autonomous-systems/16-checkpoints-rollback
+source_hash: 103b764609d13d4e
 ---
 
 ## Operator tasks

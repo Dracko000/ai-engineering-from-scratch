@@ -6,6 +6,10 @@ on:
       - 'cheatsheets/**'
       - 'phases/**'
       - 'manuals/**'
+      - 'projects/**'
+      - 'scripts/cheatsheets/**'
+      - 'site/cheatsheet-topics.js'
+      - 'site/test_cheatsheet_topics.js'
       - 'site/build-cheatsheets.js'
       - 'site/cheatsheets.css'
       - 'site/cheatsheets-print.css'
@@ -25,6 +29,10 @@ on:
       - 'cheatsheets/**'
       - 'phases/**'
       - 'manuals/**'
+      - 'projects/**'
+      - 'scripts/cheatsheets/**'
+      - 'site/cheatsheet-topics.js'
+      - 'site/test_cheatsheet_topics.js'
       - 'site/build-cheatsheets.js'
       - 'site/cheatsheets.css'
       - 'site/cheatsheets-print.css'
@@ -76,9 +84,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
-      - name: Topic schema, fact grounding, layout, links and attribution tests
-        run: node --test site/test_cheatsheets.js
-      - name: Every fact in its from files, two pages at most, no broken link, same bytes twice
+      - name: Topic schema, coverage map, generator, fact grounding, layout, links and attribution tests
+        run: node --test site/test_cheatsheets.js site/test_cheatsheet_topics.js scripts/cheatsheets/test_generate.js
+      - name: Every lesson in a topic, every fact in its from files, two pages at most, no broken link, same bytes twice
         run: node site/build-cheatsheets.js --check
 
   pdf:

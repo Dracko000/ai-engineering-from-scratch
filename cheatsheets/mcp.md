@@ -1,9 +1,11 @@
 ---
 id: mcp
 title: Model Context Protocol (MCP)
+code: MC
 subtitle: Build, call and serve stateless MCP 2026-07-28 servers over stdio and Streamable HTTP.
 hue: 160
 sources: phases/13-tools-and-protocols/06-mcp-fundamentals, phases/13-tools-and-protocols/07-building-an-mcp-server, phases/13-tools-and-protocols/08-building-an-mcp-client, phases/13-tools-and-protocols/09-mcp-transports, phases/13-tools-and-protocols/12-mcp-roots-and-elicitation, phases/13-tools-and-protocols/16-mcp-security-oauth-2-1, phases/13-tools-and-protocols/29-mcp-reliability-cancellation-and-flow-control
+source_hash: 971c475a75b5a0e9
 ---
 
 ## Tasks

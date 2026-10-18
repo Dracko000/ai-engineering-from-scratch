@@ -1,9 +1,11 @@
 ---
 id: diffusion-models
 title: Diffusion and Generative Models
+code: DG
 subtitle: Train and sample a VAE, a GAN, DDPM, latent diffusion and flow matching, then measure them. Toy Python from the lessons.
 hue: 300
 sources: phases/08-generative-ai/02-autoencoders-vae, phases/08-generative-ai/03-gans-generator-discriminator, phases/08-generative-ai/06-diffusion-ddpm-from-scratch, phases/08-generative-ai/07-latent-diffusion-stable-diffusion, phases/08-generative-ai/08-controlnet-lora-conditioning, phases/08-generative-ai/13-flow-matching-rectified-flows, phases/08-generative-ai/14-evaluation-fid-clip-score
+source_hash: fa31bd8433c7b343
 ---
 
 ## Latent diffusion with CFG

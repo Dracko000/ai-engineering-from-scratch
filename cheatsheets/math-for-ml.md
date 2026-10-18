@@ -1,9 +1,11 @@
 ---
 id: math-for-ml
 title: Math for Machine Learning
+code: MM
 subtitle: Gradients, probability, information, optimizers, decompositions and float safety. NumPy, SciPy and PyTorch.
 hue: 260
 sources: phases/01-math-foundations/02-vectors-matrices-operations, phases/01-math-foundations/04-calculus-for-ml, phases/01-math-foundations/05-chain-rule-and-autodiff, phases/01-math-foundations/06-probability-and-distributions, phases/01-math-foundations/07-bayes-theorem, phases/01-math-foundations/08-optimization, phases/01-math-foundations/09-information-theory, phases/01-math-foundations/10-dimensionality-reduction, phases/01-math-foundations/11-singular-value-decomposition, phases/01-math-foundations/12-tensor-operations, phases/01-math-foundations/13-numerical-stability, phases/01-math-foundations/14-norms-and-distances, phases/01-math-foundations/16-sampling-methods, phases/01-math-foundations/17-linear-systems
+source_hash: 9cf5b9af88d8d2f2
 ---
 
 ## Computational graph, forward and backward

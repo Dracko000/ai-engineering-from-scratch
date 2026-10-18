@@ -1,9 +1,11 @@
 ---
 id: tokenization
 title: Tokenization and BPE
+code: TB
 subtitle: Train, encode and decode a byte-level BPE tokenizer, then slice the id stream into training windows.
 hue: 45
 sources: phases/05-nlp-foundations-to-advanced/19-subword-tokenization, phases/10-llms-from-scratch/01-tokenizers, phases/10-llms-from-scratch/02-building-a-tokenizer, phases/19-capstone-projects/30-bpe-tokenizer-from-scratch, phases/19-capstone-projects/31-tokenized-dataset-sliding-window
+source_hash: 61eb8b567821c32e
 ---
 
 ## Tasks

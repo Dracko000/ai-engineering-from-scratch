@@ -1,9 +1,11 @@
 ---
 id: reinforcement-learning
 title: Reinforcement Learning
+code: RL
 subtitle: MDPs, value methods, policy gradients, PPO, RLHF and GRPO. Formulas, update lines and diagnostics from Phase 9.
 hue: 75
 sources: phases/09-reinforcement-learning/01-mdps-states-actions-rewards, phases/09-reinforcement-learning/02-dynamic-programming, phases/09-reinforcement-learning/03-monte-carlo-methods, phases/09-reinforcement-learning/04-q-learning-sarsa, phases/09-reinforcement-learning/05-dqn, phases/09-reinforcement-learning/06-policy-gradients-reinforce, phases/09-reinforcement-learning/07-actor-critic-a2c-a3c, phases/09-reinforcement-learning/08-ppo, phases/09-reinforcement-learning/09-reward-modeling-rlhf, phases/09-reinforcement-learning/12-rl-for-games
+source_hash: a115ea75e61f42aa
 ---
 
 ## PPO training loop
