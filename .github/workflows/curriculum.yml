@@ -163,7 +163,9 @@ jobs:
       - name: agent machine simulation and page stay in sync
         run: node --test site/test_agent_machine.js
       - name: lesson highlights re-anchor and survive storage faults
-        run: node --test site/test_highlights.js
+        run: node --test site/test_highlights.js site/test_highlights_store.js
+      - name: my highlights page filters, exports, and stays local
+        run: node --test site/test_highlights_page.js
       - name: build the static site
         run: node site/build.js && node site/build-projects.js --strict && node site/build-agents.js
       - name: public API and MCP contracts

@@ -354,7 +354,7 @@ python3 scripts/install_skills.py .skills --type all --dry-run</code></pre>
       });
     })();
   </script>
-  <script src="header.js?v=20261015b" defer></script>
+  <script src="header.js?v=20261018a" defer></script>
   <script src="dither.js?v=20261013a" defer></script>
   <script src="skills-demo.js?v=20261013a" defer></script>
 </body>

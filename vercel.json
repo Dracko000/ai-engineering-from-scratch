@@ -104,6 +104,10 @@
       "destination": "/how-to-learn.html"
     },
     {
+      "source": "/highlights",
+      "destination": "/highlights.html"
+    },
+    {
       "source": "/catalog",
       "has": [
         {
@@ -363,6 +367,24 @@
   ],
   "headers": [
     {
+      "source": "/highlights",
+      "headers": [
+        {
+          "key": "X-Robots-Tag",
+          "value": "noindex"
+        }
+      ]
+    },
+    {
+      "source": "/highlights.html",
+      "headers": [
+        {
+          "key": "X-Robots-Tag",
+          "value": "noindex"
+        }
+      ]
+    },
+    {
       "source": "/(.*)\\.(png|jpg|jpeg|svg|webp|woff2|woff|ttf|ico)",
       "headers": [
         {
@@ -584,7 +606,7 @@
       "permanent": true
     },
     {
-      "source": "/:page(about|catalog|glossary|roadmap|developer|contact|privacy|sponsors|projects|project|learning-paths|certifications|assessment|inside-an-ai-agent|skills|how-to-learn).html",
+      "source": "/:page(about|catalog|glossary|roadmap|developer|contact|privacy|sponsors|projects|project|learning-paths|certifications|assessment|inside-an-ai-agent|skills|how-to-learn|highlights).html",
       "destination": "/:page",
       "permanent": true
     },
