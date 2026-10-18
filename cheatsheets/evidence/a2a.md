@@ -97,10 +97,8 @@ Paths are relative to /private/tmp/aiefs-cheatsheets/manuals/a2a-101/. S = secti
 - first supportedInterfaces entry it speaks: S/2-2:3
 - blocking replaced by returnImmediately, send now waits: S/7-4:74
 
-## Tips (6)
-- A2A-Version 1.0, no patch: S/5-4:66
+## Tips (4)
 - returnImmediately when polling, subscribing, webhook: S/4-1:128
 - task id and context id from first frame: S/1-2:102
 - skip operation whose flag is absent or false: S/2-2:122
-- TaskNotFoundError for a task the caller cannot access: S/r-4:30
 - idempotent push processing, duplicates: S/4-6:98

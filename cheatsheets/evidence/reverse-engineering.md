@@ -73,18 +73,16 @@ M = manuals/reverse-engineering-101, S = M/sections, O = M/capture/out, P13 = ph
 - confidence, authority: S/r-2:22-23,36-37; S/5-1:91
 - limitations: S/r-2:25. relationship_coverage: S/r-2:26
 
-## Defaults (8)
+## Defaults (7)
 - REA_GHIDRA_STARTUP_TIMEOUT_MS 330,000 ms: S/r-1:59; S/8-1 startup deadline table
 - client tool call 60,000 ms, SDK 2.3.1: S/8-1 deadline table
-- bridge shutdown 10 s: S/1-2:40
 - TOON without --format: S/1-2:21
 - confidence observed, authority shipped-artifact when the producer names none: S/5-1:87
 - relationship_coverage null, out of the id hash: S/r-2:5,49
 - answer cache 10,000 for one target: S/r-4:10
 
-## Troubleshooting (8)
+## Troubleshooting (7)
 - capability_unavailable, Linux x64 only, inspect-macho: S/r-3:9-30; M/capture/README.md:115
-- invalid_request unknown procedure, fix name: S/r-3:56; S/4-6:266
 - client timeout, Java keeps running: S/8-1:5 and takeaways
 - provider_timeout first call: S/r-3:106
 - target_unavailable "No app is open.": S/r-3:106

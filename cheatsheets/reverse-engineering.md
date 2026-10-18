@@ -142,7 +142,6 @@ from: manuals/reverse-engineering-101/sections/r-1-commands-and-tools.md, manual
 |---|---|---|
 | `REA_GHIDRA_STARTUP_TIMEOUT_MS` | 330,000 ms | rea waits this long for Ghidra |
 | Client tool call deadline | 60,000 ms | SDK 2.3.1. Set it above the first call |
-| Bridge `shutdown` deadline | 10 s | Then Ghidra deletes the project |
 | Output without `--format` | TOON | Pass `--format json` in scripts |
 | `confidence` not named | `observed` | When the producer names none |
 | `authority` not named | `shipped-artifact` | When the producer names none |
@@ -151,12 +150,11 @@ from: manuals/reverse-engineering-101/sections/r-1-commands-and-tools.md, manual
 
 ## Troubleshooting
 type: troubleshooting
-from: manuals/reverse-engineering-101/sections/r-3-errors.md, manuals/reverse-engineering-101/sections/8-1-the-rea-mcp-server.md, manuals/reverse-engineering-101/sections/2-2-rea-doctor-and-the-ghidra-provider.md, manuals/reverse-engineering-101/sections/4-6-analyze-function-and-pseudocode.md, manuals/reverse-engineering-101/sections/7-2-a-proof-harness-outside-rea.md, manuals/reverse-engineering-101/capture/README.md
+from: manuals/reverse-engineering-101/sections/r-3-errors.md, manuals/reverse-engineering-101/sections/8-1-the-rea-mcp-server.md, manuals/reverse-engineering-101/sections/2-2-rea-doctor-and-the-ghidra-provider.md, manuals/reverse-engineering-101/sections/7-2-a-proof-harness-outside-rea.md, manuals/reverse-engineering-101/capture/README.md
 
 | Symptom | Cause | Fix |
 |---|---|---|
 | `inspect-binary-layout` exits 1, `capability_unavailable` | The pwntools profile is Linux x64 only | Use `rea inspect-macho` on macOS |
-| `invalid_request`: unknown procedure name | The name is not in the target | Fix the name and retry |
 | Client times out, Java keeps running | First Ghidra call outlasts the client deadline | Raise the per-call client deadline |
 | `provider_timeout` on the first call | Ghidra startup passed the deadline | Raise `REA_GHIDRA_STARTUP_TIMEOUT_MS` |
 | `target_unavailable`: "No app is open." | No `open_binary` yet | Call `open_binary` first |
