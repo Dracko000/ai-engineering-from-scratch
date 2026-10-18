@@ -162,6 +162,8 @@ jobs:
         run: node --test site/test_star_nudge.js
       - name: agent machine simulation and page stay in sync
         run: node --test site/test_agent_machine.js
+      - name: lesson highlights re-anchor and survive storage faults
+        run: node --test site/test_highlights.js
       - name: build the static site
         run: node site/build.js && node site/build-projects.js --strict && node site/build-agents.js
       - name: public API and MCP contracts
