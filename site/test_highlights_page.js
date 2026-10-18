@@ -353,10 +353,10 @@ test('the page renders groups, escaped text, open links and badges', () => {
   const links = container.findAll(node => node.tagName === 'A' && node.hasClass('hlp-open'));
   assert.deepEqual(links.map(link => link.getAttribute('href')), [
     'manual-a2a-101.html#hl-m1',
-    'lesson.html?path=phases%2F01-math-foundations%2F01-vectors#hl-a1',
-    'lesson.html?path=phases%2F01-math-foundations%2F01-vectors#hl-a2',
-    'lesson.html?path=phases%2F14-agent-engineering%2F02-agent-loop#hl-b1',
-    'lesson.html?path=phases%2F14-agent-engineering%2F02-agent-loop#hl-b2',
+    'lesson.html?path=phases%2F01-math-foundations%2F01-vectors&lang=en#hl-a1',
+    'lesson.html?path=phases%2F01-math-foundations%2F01-vectors&lang=en#hl-a2',
+    'lesson.html?path=phases%2F14-agent-engineering%2F02-agent-loop&lang=en#hl-b1',
+    'lesson.html?path=phases%2F14-agent-engineering%2F02-agent-loop&lang=en#hl-b2',
   ]);
   const title = container.find(node => node.tagName === 'H2' && node.hasClass('hlp-group-title') && node.textContent.includes('img'));
   assert.equal(title.textContent, '<img src=x onerror=alert(1)>');

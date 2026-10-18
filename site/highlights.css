@@ -597,7 +597,8 @@ mark.aifs-hl.aifs-hl-flash {
   color: var(--ink-soft, #4a4a4a);
 }
 
-[data-theme="dark"] .aifs-hl-badge-orphan {
+[data-theme="dark"] .aifs-hl-badge-orphan,
+[data-theme="dark"] .aifs-hl-badge-conflict {
   color: #ffb27a;
 }
 

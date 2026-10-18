@@ -32,7 +32,7 @@
 
   function timestamp(value) {
     var n = Number(value);
-    return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+    return Number.isFinite(n) && n > 0 && n <= 8640000000000000 ? Math.floor(n) : 0;
   }
 
   function text(value, max) {
@@ -70,6 +70,12 @@
   function urlFor(path) {
     if (kindOf(path) === 'manual') return 'manual-' + path.slice('manuals/'.length) + '.html';
     return 'lesson.html?path=' + encodeURIComponent(path);
+  }
+
+  function itemUrl(path, item) {
+    var url = urlFor(path);
+    if (kindOf(path) === 'lesson' && item && item.lang) url += '&lang=' + encodeURIComponent(item.lang);
+    return url + (item && item.id ? '#hl-' + item.id : '');
   }
 
   function emptyState() {
@@ -225,7 +231,11 @@
   }
 
   function markdownLine(value) {
-    return String(value || '').replace(/\s+/g, ' ').trim();
+    return String(value || '').replace(/\s+/g, ' ').trim()
+      .replace(/[\\`*_[\]()#+!|~-]/g, '\\$&')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
   }
 
   function toMarkdown(state, selection, options) {
@@ -345,6 +355,7 @@
       storage = null;
     }
     var memory = null;
+    var dirty = false;
     var persistent = !!storage;
     var readOnly = false;
     var lastError = '';
@@ -412,7 +423,7 @@
     }
 
     function fresh() {
-      if (storage && persistent) memory = fromStorage();
+      if (storage && persistent && !dirty) memory = fromStorage();
       return load();
     }
 
@@ -442,9 +453,11 @@
         try {
           storage.setItem(STORAGE_KEY, JSON.stringify(state));
           persistent = true;
+          dirty = false;
           if (lastError === 'quota' || lastError === 'write-failed') lastError = '';
         } catch (error) {
           persistent = false;
+          dirty = true;
           lastError = error && /quota/i.test(String(error.name || error.message)) ? 'quota' : 'write-failed';
         }
       }
@@ -499,6 +512,10 @@
       return save(state) ? item : null;
     }
 
+    function overBudget(state, previous, next) {
+      return size(next) > size(previous) && size(state) - size(previous) + size(next) > MAX_BYTES;
+    }
+
     function update(path, id, patch) {
       var state = writable();
       if (!state || !own(state.pages, path)) return null;
@@ -508,6 +525,10 @@
         var merged = normalizeItem(Object.assign({}, current.items[i], patch, { id: id, updatedAt: Date.now() }));
         if (!merged) return null;
         merged.createdAt = current.items[i].createdAt;
+        if (overBudget(state, current.items[i], merged)) {
+          lastError = 'full';
+          return null;
+        }
         current.items[i] = merged;
         sortItems(current.items);
         return save(state) ? merged : null;
@@ -526,6 +547,10 @@
         var merged = normalizeItem(Object.assign({}, current.items[i], patch));
         if (!merged) continue;
         if (!silentTimestamp) merged.updatedAt = Date.now();
+        if (overBudget(state, current.items[i], merged)) {
+          lastError = 'full';
+          continue;
+        }
         current.items[i] = merged;
         changed = true;
       }
@@ -638,7 +663,10 @@
         if (!own(incoming.state.pages, path)) continue;
         var sourcePage = incoming.state.pages[path];
         var target = ensurePage(state, path, null);
-        if (!target.title && sourcePage.title) target.title = sourcePage.title;
+        if (!target.title && sourcePage.title) {
+          target.title = sourcePage.title;
+          result.titles = (result.titles || 0) + 1;
+        }
         for (var i = 0; i < sourcePage.items.length; i++) mergeItem(target, sourcePage.items[i], result);
         sortItems(target.items);
         if (!target.items.length) delete state.pages[path];
@@ -647,7 +675,8 @@
         memory = JSON.parse(snapshot);
         return Object.assign(empty, { error: 'too-large' });
       }
-      if (result.added || result.updated || result.conflicts) result.ok = save(state);
+      if (result.added || result.updated || result.conflicts || result.titles) result.ok = save(state);
+      delete result.titles;
       return result;
     }
 
@@ -660,6 +689,7 @@
       if (!shared || !PATH_PATTERN.test(shared.path)) return 0;
       var state = writable();
       if (!state) return 0;
+      var snapshot = JSON.stringify(state);
       var target = ensurePage(state, shared.path, { title: shared.title });
       var keys = {};
       target.items.forEach(function (item) {
@@ -679,11 +709,11 @@
         }
       });
       if (!added) {
-        if (!target.items.length) delete state.pages[shared.path];
+        memory = JSON.parse(snapshot);
         return 0;
       }
       if (size(state) > MAX_BYTES) {
-        memory = null;
+        memory = JSON.parse(snapshot);
         lastError = 'full';
         return 0;
       }
@@ -701,10 +731,35 @@
       };
     }
 
+    function keepUnsaved(base, local) {
+      for (var path in local.pages) {
+        if (!own(local.pages, path)) continue;
+        var localPage = local.pages[path];
+        if (!own(base.pages, path)) {
+          base.pages[path] = localPage;
+          continue;
+        }
+        var target = base.pages[path];
+        if (!target.title) target.title = localPage.title;
+        localPage.items.forEach(function (item) {
+          for (var i = 0; i < target.items.length; i++) {
+            if (target.items[i].id !== item.id) continue;
+            if (item.updatedAt > target.items[i].updatedAt) target.items[i] = item;
+            return;
+          }
+          target.items.push(item);
+        });
+        sortItems(target.items);
+      }
+      return base;
+    }
+
     function reload() {
+      var unsaved = dirty && memory ? memory : null;
       memory = null;
       readOnly = false;
       load();
+      if (unsaved && !readOnly) memory = keepUnsaved(memory, unsaved);
       notify({ external: true });
     }
 
@@ -734,6 +789,7 @@
       onChange: onChange,
       reload: reload,
       urlFor: urlFor,
+      itemUrl: itemUrl,
       info: function () {
         load();
         return { persistent: persistent, readOnly: readOnly, lastError: lastError };
@@ -754,6 +810,7 @@
     encodeShare: encodeShare,
     decodeShare: decodeShare,
     urlFor: urlFor,
+    itemUrl: itemUrl,
     kindOf: kindOf,
     create: create
   };

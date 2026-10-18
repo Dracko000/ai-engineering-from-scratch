@@ -14,6 +14,7 @@
   var SHARE_PREFIX = '#aifs-share=';
   var INTERACTIVE = 'a, button, summary, [role="button"]';
   var TEXT_BUTTONS = '.quiz-option, .lesson-action-step';
+  var UNIT_TEXT = 'foreignObject, figcaption, .lf-cap, .lf-head, .asf-caption';
 
   var state = {
     article: null,
@@ -382,10 +383,25 @@
     if (!el || !el.closest) return '';
     if (el.closest('.math-inline, .math-display')) return 'math';
     if (el.closest('.lesson-figure, .mermaid-container, .m-fig-art')) {
-      if (el.closest('foreignObject, figcaption, .lf-cap, .lf-head, .asf-caption')) return '';
+      if (el.closest(UNIT_TEXT)) return '';
       return 'figure';
     }
     return '';
+  }
+
+  function inTextRegion(unit, node) {
+    var el = node && (node.nodeType === 3 ? node.parentNode : node);
+    var region = el && el.closest ? el.closest(UNIT_TEXT) : null;
+    return !!(region && unit.contains(region));
+  }
+
+  function unitSelected(unit, range) {
+    var startIn = unit.contains(range.startContainer);
+    var endIn = unit.contains(range.endContainer);
+    if (!startIn && !endIn) return true;
+    if (startIn && !inTextRegion(unit, range.startContainer)) return true;
+    if (endIn && !inTextRegion(unit, range.endContainer)) return true;
+    return false;
   }
 
   function selectionInfo() {
@@ -410,6 +426,8 @@
       if (!segment.atomic) {
         if (segment.node === range.startContainer) from = segment.start + range.startOffset;
         if (segment.node === range.endContainer) to = segment.start + range.endOffset;
+      } else if (segment.unit && !unitSelected(segment.node, range)) {
+        continue;
       } else if (segment.node.contains(range.startContainer) || segment.node.contains(range.endContainer)) {
         snapped = segment.unit ? 'figure' : 'math';
       }
@@ -775,12 +793,15 @@
       if (!state.article || state.painting) return;
       var model = Anchor.buildModel(state.article);
       var hash = textHash(model.text);
-      var marks = state.article.querySelectorAll('mark.aifs-hl');
-      var expected = 0;
+      var broken = false;
       for (var id in state.runtime) {
-        if (Object.prototype.hasOwnProperty.call(state.runtime, id) && /^(anchored|moved)$/.test(state.runtime[id].status)) expected++;
+        if (!Object.prototype.hasOwnProperty.call(state.runtime, id) || !/^(anchored|moved|approx)$/.test(state.runtime[id].status)) continue;
+        var anchorNode = document.getElementById('hl-' + id);
+        if (!anchorNode || !state.article.contains(anchorNode)) {
+          broken = true;
+          break;
+        }
       }
-      var broken = expected > 0 && !marks.length && !state.article.querySelector('.aifs-hl-atom');
       if (hash !== state.lastHash || broken) {
         state.translated = isTranslated();
         paint(false);
@@ -1237,7 +1258,7 @@
       actions.appendChild(button('aifs-hl-link', 'Share', { 'data-action': 'share' }));
       actions.appendChild(button('aifs-hl-link aifs-hl-link-danger', 'Delete', { 'data-action': 'delete' }));
     } else {
-      var link = make('a', 'aifs-hl-link', { href: pageHref(path, item.id, '') });
+      var link = make('a', 'aifs-hl-link', { href: Store.itemUrl(path, item) });
       link.textContent = 'Open';
       actions.appendChild(link);
     }

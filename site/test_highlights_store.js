@@ -338,3 +338,86 @@ test('adding shared highlights makes new local copies once', () => {
   assert.ok(items.every(item => /^h/.test(item.id)));
   assert.equal(reader.page(LESSON_PATH).title, 'GD');
 });
+
+test('highlights kept only in memory after a failed write survive a storage event from another tab', () => {
+  const storage = memoryStorage();
+  const win = fakeWindow(storage);
+  const store = StoreModule.create(win);
+  const realSet = storage.setItem;
+  storage.setItem = () => { const error = new Error('quota'); error.name = 'QuotaExceededError'; throw error; };
+  const unsaved = store.add(LESSON_PATH, sampleItem({ note: 'only in this tab' }));
+  storage.setItem = realSet;
+  StoreModule.create(fakeWindow(storage)).add(LESSON_PATH, sampleItem({ note: 'from the other tab', quote: { exact: 'other' } }));
+  win.dispatch('storage', { key: KEY });
+  const notes = store.items(LESSON_PATH).map(item => item.note).sort();
+  assert.deepEqual(notes, ['from the other tab', 'only in this tab']);
+  assert.ok(store.items(LESSON_PATH).some(item => item.id === unsaved.id));
+  store.add(LESSON_PATH, sampleItem({ note: 'third', quote: { exact: 'third' } }));
+  const saved = JSON.parse(storage.getItem(KEY)).pages[LESSON_PATH].items.map(item => item.note).sort();
+  assert.deepEqual(saved, ['from the other tab', 'only in this tab', 'third']);
+});
+
+test('note edits respect the size budget and leave the previous note in place', () => {
+  const { store } = storeWith();
+  const big = 'x'.repeat(19000);
+  let i = 0;
+  while (store.add(`phases/0${i % 9}-a/${i}-b`, sampleItem({ quote: { exact: big + i } }))) i++;
+  const ids = store.pages().flatMap(page => page.items.map(item => [page.path, item.id]));
+  let refusedAt = -1;
+  for (let k = 0; k < ids.length; k++) {
+    if (store.update(ids[k][0], ids[k][1], { note: 'n'.repeat(2000) }) === null) { refusedAt = k; break; }
+  }
+  assert.ok(refusedAt >= 0);
+  assert.equal(store.info().lastError, 'full');
+  assert.equal(store.items(ids[refusedAt][0]).find(item => item.id === ids[refusedAt][1]).note, '');
+  assert.ok(store.update(ids[0][0], ids[0][1], { note: 'short' }));
+});
+
+test('an import that only fills a missing page title is saved', () => {
+  const storage = memoryStorage();
+  const store = StoreModule.create(fakeWindow(storage));
+  const item = store.add(LESSON_PATH, sampleItem());
+  const exported = JSON.parse(store.exportJson());
+  exported.pages[LESSON_PATH].title = 'Gradient Descent';
+  assert.equal(store.page(LESSON_PATH).title, '');
+  const result = store.importJson(JSON.stringify(exported));
+  assert.equal(result.unchanged, 1);
+  assert.equal(StoreModule.create(fakeWindow(storage)).page(LESSON_PATH).title, 'Gradient Descent');
+  assert.ok(item);
+});
+
+test('markdown export escapes notes and quotes so they stay plain text', () => {
+  const { store } = storeWith();
+  store.add(LESSON_PATH, sampleItem({ note: '<img src=x onerror=alert(1)> [click](javascript:alert(1)) `code` *bold*', quote: { exact: '<script>x</script> & more' } }), { title: '<b>Title</b>' });
+  const md = store.exportMarkdown();
+  assert.doesNotMatch(md, /<img|<script|<b>|\]\(javascript/);
+  assert.match(md, /&lt;img src=x onerror=alert\\\(1\\\)&gt;/);
+  assert.match(md, /&amp; more/);
+  assert.match(md, /## &lt;b&gt;Title&lt;\/b&gt;/);
+});
+
+test('open links carry the language a lesson highlight was made in', () => {
+  assert.equal(StoreModule.itemUrl(LESSON_PATH, { id: 'h1', lang: 'zh-tw' }), 'lesson.html?path=phases%2F01-math-foundations%2F04-gradient-descent&lang=zh-tw#hl-h1');
+  assert.equal(StoreModule.itemUrl(LESSON_PATH, { id: 'h1', lang: 'en' }), 'lesson.html?path=phases%2F01-math-foundations%2F04-gradient-descent&lang=en#hl-h1');
+  assert.equal(StoreModule.itemUrl(MANUAL_PATH, { id: 'h2', lang: 'en' }), 'manual-a2a-101.html#hl-h2');
+});
+
+test('out-of-range timestamps are dropped instead of breaking date formatting', () => {
+  const item = StoreModule.normalizeItem({ quote: { exact: 'x' }, createdAt: 9e15, updatedAt: 1e300 });
+  assert.ok(Number.isFinite(new Date(item.createdAt).getTime()));
+  assert.ok(Number.isFinite(new Date(item.updatedAt).getTime()));
+});
+
+test('a shared add that would exceed the budget keeps session-only highlights', () => {
+  const win = fakeWindow(null);
+  Object.defineProperty(win, 'localStorage', { get() { throw new Error('SecurityError'); } });
+  const store = StoreModule.create(win);
+  const big = 'x'.repeat(19000);
+  let i = 0;
+  while (store.add(`phases/0${i % 9}-a/${i}-b`, sampleItem({ quote: { exact: big + i } }))) i++;
+  const before = store.pages().reduce((n, page) => n + page.items.length, 0);
+  const shared = { path: 'phases/09-new/01-page', title: 'New', items: [StoreModule.normalizeItem({ quote: { exact: big + 'shared' } })] };
+  assert.equal(store.addShared(shared), 0);
+  assert.equal(store.pages().reduce((n, page) => n + page.items.length, 0), before);
+  assert.equal(store.page('phases/09-new/01-page'), null);
+});

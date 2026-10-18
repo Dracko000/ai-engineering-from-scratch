@@ -456,7 +456,7 @@
       var meta = el('p', { className: 'hlp-meta' });
       add(meta, add(el('span', { className: 'hlp-color-name' }), el('span', { className: 'hlp-swatch', 'aria-hidden': 'true' }), el('span', null, COLOR_LABELS[item.color] || item.color)));
       if (item.sectionTitle) meta.appendChild(el('span', { className: 'hlp-section' }, item.sectionTitle));
-      if (item.createdAt) {
+      if (item.createdAt && Number.isFinite(new Date(item.createdAt).getTime())) {
         var time = el('time', { datetime: new Date(item.createdAt).toISOString() }, formatDate(item.createdAt));
         meta.appendChild(add(el('span'), el('span', { className: 'hlp-label' }, 'Saved '), time));
       }
@@ -465,7 +465,7 @@
         meta.appendChild(el('span', { className: 'hlp-badge hlp-badge-' + badge.tone }, badge.label));
       });
       body.appendChild(meta);
-      var open = el('a', { className: 'hlp-open', href: page.url + '#hl-' + item.id, 'aria-label': 'Open this highlight in ' + (page.title || page.path) }, 'Open');
+      var open = el('a', { className: 'hlp-open', href: store.itemUrl ? store.itemUrl(page.path, item) : page.url + '#hl-' + item.id, 'aria-label': 'Open this highlight in ' + (page.title || page.path) }, 'Open');
       return add(el('li', { className: 'hlp-item hlp-item-' + item.color, 'data-key': key }),
         add(el('div', { className: 'hlp-item-select' }), box), body, open);
     }
