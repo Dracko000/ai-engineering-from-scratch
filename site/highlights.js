@@ -599,7 +599,8 @@
     var item = findItem(id);
     if (!item) return;
     hideToolbar();
-    state.editor = { id: id, anchor: anchorEl || null, returnFocus: anchorEl || firstMark(id) };
+    var fromPanel = !!(anchorEl && ui.panel.contains(anchorEl));
+    state.editor = { id: id, anchor: anchorEl || null, fromPanel: fromPanel, returnFocus: fromPanel ? null : (anchorEl || firstMark(id)) };
     ui.editorNote.value = item.note || '';
     ui.editorStatus.textContent = '';
     var readOnly = Store.info().readOnly;
@@ -622,12 +623,12 @@
 
   function positionEditor() {
     if (!state.editor) return;
-    var anchor = state.editor.anchor && state.editor.anchor.isConnected ? state.editor.anchor : firstMark(state.editor.id);
+    var anchor = state.editor.fromPanel ? null : firstMark(state.editor.id);
     var docWidth = document.documentElement.clientWidth;
     var width = ui.editor.offsetWidth;
     var top;
     var left;
-    if (anchor && !ui.panel.contains(anchor)) {
+    if (anchor) {
       var rect = anchor.getBoundingClientRect();
       top = rect.bottom + window.pageYOffset + 10;
       left = rect.left + window.pageXOffset;
@@ -647,9 +648,15 @@
     if (!state.editor) return;
     var target = state.editor.returnFocus;
     var id = state.editor.id;
+    var fromPanel = state.editor.fromPanel;
     state.editor = null;
     ui.editor.hidden = true;
     if (!restoreFocus) return;
+    if (fromPanel && !ui.panel.hidden) {
+      var row = ui.list.querySelector('.aifs-hl-item[data-hl-id="' + id + '"] button[data-action="edit"]');
+      (row || ui.list).focus();
+      return;
+    }
     if (!target || !target.isConnected) target = firstMark(id);
     if (target && target.focus) target.focus({ preventScroll: true });
   }
@@ -675,7 +682,7 @@
   function deleteFromEditor() {
     if (!state.editor || !state.ctx) return;
     var id = state.editor.id;
-    var fromPanel = state.editor.anchor && ui.panel.contains(state.editor.anchor);
+    var fromPanel = state.editor.fromPanel;
     state.editor = null;
     ui.editor.hidden = true;
     if (Store.remove(state.ctx.path, id)) announce('Highlight deleted.');
@@ -704,7 +711,7 @@
     ui.panel.hidden = true;
     ui.launcher.setAttribute('aria-expanded', 'false');
     document.documentElement.classList.remove('aifs-hl-panel-open');
-    if (state.editor && state.editor.anchor && ui.panel.contains(state.editor.anchor)) closeEditor(false);
+    if (state.editor && state.editor.fromPanel) closeEditor(false);
     if (restoreFocus) ui.launcher.focus();
   }
 

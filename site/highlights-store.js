@@ -270,9 +270,12 @@
       var item = normalizeItem(Object.assign({}, raw, { id: newId(), createdAt: Date.now(), updatedAt: Date.now() }));
       if (!item) return null;
       var state = load();
-      if (!own(state.pages, path)) state.pages[path] = { title: '', items: [] };
-      var target = state.pages[path];
-      if (target.items.length >= MAX_ITEMS_PER_PAGE) {
+      if (readOnly) {
+        lastError = 'newer-schema';
+        return null;
+      }
+      var existing = own(state.pages, path) ? state.pages[path] : null;
+      if (existing && existing.items.length >= MAX_ITEMS_PER_PAGE) {
         lastError = 'page-full';
         return null;
       }
@@ -280,6 +283,8 @@
         lastError = 'full';
         return null;
       }
+      if (!existing) state.pages[path] = { title: '', items: [] };
+      var target = state.pages[path];
       if (meta && meta.title) target.title = text(meta.title, MAX_TITLE);
       target.items.push(item);
       target.items.sort(function (a, b) { return a.position.start - b.position.start; });

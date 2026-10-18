@@ -518,6 +518,9 @@ test('data from a newer schema is shown read-only and never overwritten', () => 
   assert.equal(store.info().readOnly, true);
   assert.equal(store.items(LESSON_PATH)[0].quote.exact, 'from the future');
   assert.equal(store.add(LESSON_PATH, sampleItem()), null);
+  assert.equal(store.add('phases/09-new/01-page', sampleItem()), null);
+  assert.equal(store.items(LESSON_PATH).length, 1);
+  assert.deepEqual(store.pages().map(page => page.path), [LESSON_PATH]);
   assert.equal(store.remove(LESSON_PATH, 'future'), false);
   assert.equal(storage.getItem('aifs:highlights:v1'), raw);
 });
@@ -637,6 +640,9 @@ test('the store refuses new highlights past its total size budget', () => {
   }
   assert.ok(added < 1000 && added > 300, String(added));
   assert.equal(store.info().lastError, 'full');
+  const pagesBefore = store.pages().length;
+  assert.equal(store.add('phases/09-new/01-page', sampleItem({ quote: { exact: big } })), null);
+  assert.equal(store.pages().length, pagesBefore);
 });
 
 test('read-only data is not changed in memory by a refused edit', () => {
