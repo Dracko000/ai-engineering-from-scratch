@@ -251,11 +251,11 @@ With mixed lengths, vLLM led. At a ratio of 0.5 it gave 169.6 against 159.6 tok/
 
 Our reading: when new prompts arrive one by one, each prefill shares a step with the running decodes. The vLLM server split that work so that the stream stalled less. We did not test a mixed chunk on SGLang for this workload.
 
-This is one model, one GPU, and four workloads. It agrees with the field reports on the main point: on a dense model with unique prompts, the engines tie on throughput. It adds the part that a throughput chart hides. When the pool is full, you choose between a fast first token and a smooth stream, and the two engines chose differently by default.
+This is one model, one GPU, and four workloads. It agrees with the field reports on the main point: on a dense model with unique prompts, the engines were within 6 percent on throughput. It adds the part that a throughput chart hides. When the pool is full, you choose between a fast first token and a smooth stream, and the two engines chose differently by default. With mixed prompt lengths, that trade went away, and vLLM was ahead on both.
 
 ## Our position
 
-For a dense model with unique prompts, the choice of engine is not a throughput decision. It is a latency decision at a full pool: SGLang protected the stream, and vLLM the first token. At a fixed rate past that point, vLLM also gave 11 percent more output on our L4. Decide on model support, startup time, and the hardware you have.
+For a dense model with unique prompts, the choice of engine is not a throughput decision. It is a latency decision, and the shape of your traffic picks the winner. When requests arrive together, at a full pool or in waves, SGLang protected the stream and vLLM the first token. When prompts of mixed lengths arrive one by one, vLLM led on both throughput and stream smoothness. At a fixed rate past the full pool, vLLM also gave 11 percent more output on our L4. Decide on model support, startup time, and the hardware you have, then measure your own length mix.
 
 For repeated prefixes, check that the prefix cache is on, then measure. On our L4, with prefixes that fit the pool, the two caches tied under 500 ms. SGLang with its cache off took 14,706 ms. For DeepSeek-class MoE models on many GPUs, start from SGLang, because that is where the field runs them.
 
