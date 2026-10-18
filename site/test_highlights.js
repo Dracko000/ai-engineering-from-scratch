@@ -387,6 +387,47 @@ test('wrapping marks text across inline and block elements and unwrapping restor
   assert.ok(paragraphs.every(p => p.childNodes.every((child, i, all) => !(child.nodeType === 3 && all[i + 1] && all[i + 1].nodeType === 3))));
 });
 
+
+test('a short quote with hundreds of copies keeps its own place', () => {
+  const md = '## Cats\n\n' + Array.from({ length: 700 }, (_, i) => `the cat number ${i} sat.`).join(' ');
+  const model = modelOf(md);
+  const at = model.text.indexOf('number 650 sat') - 4;
+  const selector = Anchor.describe(model.text, at, at + 3);
+  assert.equal(selector.quote.exact, 'cat');
+  const hit = Anchor.locate(model.text, selector);
+  assert.equal(hit.method, 'context');
+  assert.equal(hit.start, at);
+});
+
+test('a deleted medium quote does not jump to a similar phrase far away', () => {
+  const filler = Array.from({ length: 80 }, (_, i) => `Filler sentence ${i} keeps the two passages apart.`).join(' ');
+  const md = `## A\n\nWe minimise the loss function here with care.\n\n${filler}\n\n## B\n\nLater we revisit the loss function in detail.`;
+  const before = modelOf(md);
+  const selector = select(before.text, 'the loss function here');
+  const after = modelOf(md.replace(' the loss function here', ''));
+  assert.equal(Anchor.locate(after.text, selector), null);
+});
+
+test('overlapping highlights wrap from the end with one model and nest cleanly', () => {
+  const dom = lessonDom('## A\n\nalpha beta gamma delta epsilon zeta.');
+  const original = dom.textContent;
+  let model = Anchor.buildModel(dom);
+  const text = model.text;
+  const ranges = [
+    [text.indexOf('gamma'), text.indexOf('zeta') + 4],
+    [text.indexOf('beta'), text.indexOf('delta') + 5],
+  ];
+  let wrappedFrom = Infinity;
+  const all = [];
+  for (const [start, end] of ranges) {
+    if (end > wrappedFrom) model = Anchor.buildModel(dom);
+    wrappedFrom = Math.min(wrappedFrom, start);
+    all.push(Anchor.wrap(model, start, end, () => new ElementNode('mark', { class: 'aifs-hl' })).marks.map(m => m.textContent).join(''));
+  }
+  assert.deepEqual(all, ['gamma delta epsilon zeta', 'beta gamma delta']);
+  assert.equal(dom.textContent, original);
+});
+
 function memoryStorage(seed = {}) {
   const data = new Map(Object.entries(seed));
   return {
@@ -576,6 +617,55 @@ test('another tab writing the key reloads the store and notifies listeners', () 
   win.dispatch('storage', { key: 'aifs:highlights:v1' });
   assert.equal(store.items(LESSON_PATH).length, 1);
   assert.equal(calls, 1);
+});
+
+
+test('imported language tags are lowercased so they match the page language', () => {
+  const store = StoreModule.create(fakeWindow(memoryStorage()));
+  assert.equal(store.add(LESSON_PATH, sampleItem({ lang: 'pt-BR' })).lang, 'pt-br');
+});
+
+test('the store refuses new highlights past its total size budget', () => {
+  const store = StoreModule.create(fakeWindow(memoryStorage()));
+  const big = 'x'.repeat(3900);
+  let added = 0;
+  for (let p = 0; p < 2; p++) {
+    for (let i = 0; i < 500; i++) {
+      if (store.add(`phases/0${p}-a/${i}-b`, sampleItem({ quote: { exact: big + i } }))) added++;
+      else break;
+    }
+  }
+  assert.ok(added < 1000 && added > 300, String(added));
+  assert.equal(store.info().lastError, 'full');
+});
+
+test('read-only data is not changed in memory by a refused edit', () => {
+  const raw = JSON.stringify({ schemaVersion: 2, pages: { [LESSON_PATH]: { items: [{ id: 'future', color: 'blue', quote: { exact: 'kept' } }] } } });
+  const store = StoreModule.create(fakeWindow(memoryStorage({ 'aifs:highlights:v1': raw })));
+  assert.equal(store.update(LESSON_PATH, 'future', { color: 'pink' }), null);
+  assert.equal(store.updateMany(LESSON_PATH, { future: { status: 'orphaned' } }, true), false);
+  assert.equal(store.items(LESSON_PATH)[0].color, 'blue');
+  assert.equal(store.importJson(JSON.stringify({ format: 'aifs-highlights', schemaVersion: 1, pages: {} })).error, 'newer-schema');
+});
+
+test('a reload from another tab is flagged so the page does not write back', () => {
+  const storage = memoryStorage();
+  const win = fakeWindow(storage);
+  const store = StoreModule.create(win);
+  const metas = [];
+  store.onChange((_, meta) => metas.push(meta.external === true));
+  store.add(LESSON_PATH, sampleItem());
+  win.dispatch('storage', { key: 'aifs:highlights:v1' });
+  assert.deepEqual(metas, [false, true]);
+});
+
+test('the original highlighted text survives a re-anchor and appears in exports', () => {
+  const store = StoreModule.create(fakeWindow(memoryStorage()));
+  const item = store.add(LESSON_PATH, sampleItem(), { title: 'GD' });
+  store.updateMany(LESSON_PATH, { [item.id]: { status: 'moved', originalExact: 'steepest increase', quote: { exact: 'steepest ascent', prefix: '', suffix: '' } } }, true);
+  const saved = store.items(LESSON_PATH)[0];
+  assert.equal(saved.originalExact, 'steepest increase');
+  assert.match(store.exportMarkdown(), /Originally highlighted: steepest increase/);
 });
 
 test('the lesson page loads the highlight scripts and mounts after the table of contents', () => {

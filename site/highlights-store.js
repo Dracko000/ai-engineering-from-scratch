@@ -16,6 +16,7 @@
   var MAX_CONTEXT = 64;
   var MAX_NOTE = 2000;
   var MAX_TITLE = 200;
+  var MAX_BYTES = 1500000;
   var PATH_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._\/-]{0,299}$/;
 
   function own(object, key) {
@@ -56,7 +57,7 @@
     var createdAt = timestamp(raw.createdAt) || Date.now();
     return {
       id: id,
-      lang: typeof raw.lang === 'string' && /^[a-z]{2,3}(?:-[A-Za-z0-9]{2,8})?$/.test(raw.lang) ? raw.lang : 'en',
+      lang: typeof raw.lang === 'string' && /^[a-z]{2,3}(?:-[a-z0-9]{2,8})?$/.test(raw.lang.toLowerCase()) ? raw.lang.toLowerCase() : 'en',
       color: COLORS.indexOf(raw.color) >= 0 ? raw.color : COLORS[0],
       note: text(raw.note, MAX_NOTE),
       quote: {
@@ -67,6 +68,8 @@
       position: { start: start, end: end, length: offset(position.length) },
       section: text(raw.section, 200),
       sectionTitle: text(raw.sectionTitle, MAX_TITLE),
+      originalExact: text(raw.originalExact, MAX_EXACT),
+      orphanHash: text(raw.orphanHash, 40),
       status: STATUSES.indexOf(raw.status) >= 0 ? raw.status : 'anchored',
       createdAt: createdAt,
       updatedAt: timestamp(raw.updatedAt) || createdAt
@@ -145,6 +148,9 @@
         var item = page.items[j];
         count++;
         out.push('> ' + markdownLine(item.quote.exact), '');
+        if (item.originalExact && item.originalExact !== item.quote.exact) {
+          out.push('Originally highlighted: ' + markdownLine(item.originalExact), '');
+        }
         var meta = ['Colour: ' + item.color];
         if (item.sectionTitle) meta.push('Section: ' + markdownLine(item.sectionTitle));
         if (item.lang !== 'en') meta.push('Language: ' + item.lang);
@@ -213,9 +219,17 @@
       return memory;
     }
 
-    function notify() {
+    function notify(meta) {
       for (var i = 0; i < listeners.length; i++) {
-        try { listeners[i](memory); } catch (_) {}
+        try { listeners[i](memory, meta || {}); } catch (_) {}
+      }
+    }
+
+    function size(state) {
+      try {
+        return JSON.stringify(state).length;
+      } catch (_) {
+        return Infinity;
       }
     }
 
@@ -262,6 +276,10 @@
         lastError = 'page-full';
         return null;
       }
+      if (size(state) + size(item) > MAX_BYTES) {
+        lastError = 'full';
+        return null;
+      }
       if (meta && meta.title) target.title = text(meta.title, MAX_TITLE);
       target.items.push(item);
       target.items.sort(function (a, b) { return a.position.start - b.position.start; });
@@ -269,6 +287,10 @@
     }
 
     function update(path, id, patch) {
+      if (load() && readOnly) {
+        lastError = 'newer-schema';
+        return null;
+      }
       var current = page(path);
       if (!current) return null;
       for (var i = 0; i < current.items.length; i++) {
@@ -283,6 +305,7 @@
     }
 
     function updateMany(path, patches, silentTimestamp) {
+      if (load() && readOnly) return false;
       var current = page(path);
       if (!current) return false;
       var changed = false;
@@ -302,6 +325,7 @@
 
     function remove(path, id) {
       var state = load();
+      if (readOnly) return false;
       var current = own(state.pages, path) ? state.pages[path] : null;
       if (!current) return false;
       var before = current.items.length;
@@ -344,6 +368,8 @@
         return { ok: false, error: 'wrong-format', added: 0, updated: 0, unchanged: 0, skipped: 0 };
       }
       var state = load();
+      if (readOnly) return { ok: false, error: 'newer-schema', added: 0, updated: 0, unchanged: 0, skipped: 0 };
+      var snapshot = JSON.stringify(state);
       var result = { ok: true, error: '', added: 0, updated: 0, unchanged: 0, skipped: incoming.skipped };
       for (var path in incoming.state.pages) {
         if (!own(incoming.state.pages, path)) continue;
@@ -371,6 +397,10 @@
         target.items.sort(function (a, b) { return a.position.start - b.position.start; });
         if (!target.items.length) delete state.pages[path];
       }
+      if (size(state) > MAX_BYTES) {
+        memory = JSON.parse(snapshot);
+        return { ok: false, error: 'too-large', added: 0, updated: 0, unchanged: 0, skipped: 0 };
+      }
       if (result.added || result.updated) result.ok = save(state);
       return result;
     }
@@ -388,7 +418,7 @@
       memory = null;
       readOnly = false;
       load();
-      notify();
+      notify({ external: true });
     }
 
     if (win && win.addEventListener) {

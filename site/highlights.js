@@ -268,9 +268,9 @@
       hideToolbar();
       if (state.editor) positionEditor();
     });
-    Store.onChange(function () {
+    Store.onChange(function (_, meta) {
       if (state.painting || !state.article) return;
-      paint();
+      paint(!(meta && meta.external));
       renderPanel();
     });
   }
@@ -365,6 +365,7 @@
   function storageMessage() {
     var info = Store.info();
     if (info.readOnly) return 'These highlights were saved by a newer version of this site. They are shown here but cannot be changed.';
+    if (info.lastError === 'full') return 'Highlights use their full share of browser storage. Delete or export some before adding more.';
     if (info.lastError === 'quota') return 'Browser storage is full. New highlights last only until you close this tab. Export them to keep a copy.';
     if (!info.persistent) return 'This browser does not allow site storage here, so highlights last only until you close this tab.';
     if (info.lastError === 'unreadable' || info.lastError === 'skipped-invalid') {
@@ -391,7 +392,7 @@
     clearSelection();
     hideToolbar();
     if (!item) {
-      announce(Store.info().readOnly ? 'Highlights cannot be changed in this browser.' : 'The highlight could not be saved.');
+      announce(Store.info().readOnly ? 'Highlights cannot be changed in this browser.' : (storageMessage() || 'The highlight could not be saved.'));
       return;
     }
     var message = storageMessage();
@@ -412,6 +413,11 @@
       atoms[j].classList.remove('aifs-hl-atom');
       COLORS.forEach(function (color) { atoms[j].classList.remove('aifs-hl-bg-' + color); });
       atoms[j].removeAttribute('data-hl-ids');
+      if (atoms[j].hasAttribute('data-hl-focus')) {
+        atoms[j].removeAttribute('data-hl-focus');
+        atoms[j].removeAttribute('tabindex');
+        atoms[j].removeAttribute('aria-describedby');
+      }
     }
   }
 
@@ -423,7 +429,6 @@
       if (index === 0) {
         mark.id = 'hl-' + item.id;
         mark.tabIndex = 0;
-        mark.setAttribute('role', 'button');
         mark.setAttribute('aria-describedby', 'aifsHlMarkHint');
         if (item.note) mark.title = item.note;
       }
@@ -440,7 +445,7 @@
     return (hash >>> 0).toString(36) + ':' + value.length;
   }
 
-  function paint() {
+  function paint(persist) {
     if (!state.article || !state.ctx) return;
     state.painting = true;
     try {
@@ -457,13 +462,14 @@
           runtime[item.id] = { status: 'other-lang' };
           continue;
         }
-        var cacheKey = item.id + '|' + item.updatedAt + '|' + item.quote.exact.length;
+        var cacheKey = item.id + '|' + item.quote.exact;
+        var knownOrphan = state.orphanCache[cacheKey] === hash || (item.status === 'orphaned' && item.orphanHash === hash);
         var section = Anchor.sectionById(model, item.section);
-        var hit = state.orphanCache[cacheKey] === hash ? null : Anchor.locate(model.text, item, { regions: section ? [section] : [] });
+        var hit = knownOrphan ? null : Anchor.locate(model.text, item, { regions: section ? [section] : [] });
         if (!hit) {
           state.orphanCache[cacheKey] = hash;
           runtime[item.id] = { status: 'orphaned' };
-          if (item.status !== 'orphaned') patches[item.id] = { status: 'orphaned' };
+          if (item.status !== 'orphaned' || item.orphanHash !== hash) patches[item.id] = { status: 'orphaned', orphanHash: hash };
           continue;
         }
         var status = hit.method === 'fuzzy' || item.status === 'moved' ? 'moved' : 'anchored';
@@ -475,7 +481,9 @@
         if (hit.method !== 'context' || item.position.start !== described.position.start || item.position.length !== described.position.length) {
           patch.quote = described.quote;
           patch.position = described.position;
+          if (described.quote.exact !== item.quote.exact && !item.originalExact) patch.originalExact = item.quote.exact;
         }
+        if (item.orphanHash) patch.orphanHash = '';
         if (nextSection && nextSection.id !== item.section) {
           patch.section = nextSection.id;
           patch.sectionTitle = nextSection.title;
@@ -483,9 +491,11 @@
         if (Object.keys(patch).length) patches[item.id] = patch;
         resolved.push({ item: item, start: hit.start, end: hit.end });
       }
-      resolved.sort(function (a, b) { return a.start - b.start || b.end - a.end; });
+      resolved.sort(function (a, b) { return b.start - a.start || a.end - b.end; });
+      var wrappedFrom = Infinity;
       for (var r = 0; r < resolved.length; r++) {
-        if (r > 0) model = Anchor.buildModel(state.article);
+        if (resolved[r].end > wrappedFrom) model = Anchor.buildModel(state.article);
+        wrappedFrom = Math.min(wrappedFrom, resolved[r].start);
         var painted = Anchor.wrap(model, resolved[r].start, resolved[r].end, createMark(resolved[r].item));
         if (painted.marks.length) {
           var last = painted.marks[painted.marks.length - 1];
@@ -498,10 +508,15 @@
           ids.push(resolved[r].item.id);
           atom.setAttribute('data-hl-ids', ids.join(' '));
         }
+        if (!painted.marks.length && painted.atoms.length && !painted.atoms[0].hasAttribute('tabindex')) {
+          painted.atoms[0].tabIndex = 0;
+          painted.atoms[0].setAttribute('aria-describedby', 'aifsHlMarkHint');
+          painted.atoms[0].setAttribute('data-hl-focus', resolved[r].item.id);
+        }
         if (!painted.marks.length && !painted.atoms.length) runtime[resolved[r].item.id] = { status: 'orphaned' };
       }
       state.runtime = runtime;
-      if (Object.keys(patches).length && !Store.info().readOnly) Store.updateMany(state.ctx.path, patches, true);
+      if (persist !== false && Object.keys(patches).length && !Store.info().readOnly) Store.updateMany(state.ctx.path, patches, true);
     } finally {
       state.painting = false;
     }
@@ -574,9 +589,9 @@
       firstButton.focus();
       return;
     }
-    if ((event.key === 'Enter' || event.key === ' ') && event.target && event.target.matches && event.target.matches('mark.aifs-hl[tabindex]')) {
+    if ((event.key === 'Enter' || event.key === ' ') && event.target && event.target.matches && event.target.matches('mark.aifs-hl[tabindex], .aifs-hl-atom[data-hl-focus]')) {
       event.preventDefault();
-      openEditor(event.target.getAttribute('data-hl-id'), false);
+      openEditor(idFromTarget(event.target), false);
     }
   }
 
@@ -712,6 +727,11 @@
     var quote = make('blockquote', 'aifs-hl-item-quote');
     quote.textContent = preview(item.quote.exact);
     body.appendChild(quote);
+    if (item.originalExact && item.originalExact !== item.quote.exact) {
+      var original = make('p', 'aifs-hl-item-note aifs-hl-item-original');
+      original.textContent = 'Originally: ' + preview(item.originalExact);
+      body.appendChild(original);
+    }
     if (item.note) {
       var note = make('p', 'aifs-hl-item-note');
       note.textContent = item.note;
@@ -907,9 +927,9 @@
       var result = Store.importJson(content);
       var message;
       if (!result.ok) {
-        message = result.error === 'newer-schema'
-          ? 'That file comes from a newer version of this site and was not imported.'
-          : 'That file is not a highlights export and was not imported.';
+        if (result.error === 'newer-schema') message = 'That file comes from a newer version of this site, or this browser holds newer highlights, so nothing was imported.';
+        else if (result.error === 'too-large') message = 'Importing that file would use too much browser storage, so nothing was imported.';
+        else message = 'That file is not a highlights export and was not imported.';
       } else {
         message = 'Imported ' + result.added + ' new, updated ' + result.updated + ', kept ' + result.unchanged + ' unchanged' + (result.skipped ? ', skipped ' + result.skipped + ' invalid' : '') + '.';
       }

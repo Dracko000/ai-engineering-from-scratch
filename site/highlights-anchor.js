@@ -10,7 +10,8 @@
   var FUZZY_MAX_PATTERN = 256;
   var FUZZY_EDGE = 64;
   var FUZZY_THRESHOLD = 0.75;
-  var MAX_EXACT_HITS = 500;
+  var MAX_EXACT_HITS = 20000;
+  var WHOLE_TEXT_FUZZY_MIN = 40;
   var CONTEXT_TOLERANCE = 0.25;
   var MIN_TOKEN_OVERLAP = 0.5;
   var LONG_MIN_RATIO = 0.7;
@@ -161,6 +162,14 @@
 
   function locateExact(text, quote, target) {
     var exact = quote.exact;
+    var prefix = quote.prefix || '';
+    var withContext = findAll(text, prefix + exact + (quote.suffix || ''));
+    if (withContext.length) {
+      var direct = pickNearest(withContext.map(function (at) {
+        return { start: at + prefix.length, end: at + prefix.length + exact.length };
+      }), target);
+      return { start: direct.start, end: direct.end, method: 'context', score: 1 };
+    }
     var hits = findAll(text, exact);
     if (!hits.length) return null;
     var full = [];
@@ -304,7 +313,7 @@
       if (regions[i] && regions[i].end > regions[i].start) tries.push(regions[i]);
     }
     if (target >= 0) tries.push({ start: target - slack, end: target + exact.length + slack });
-    tries.push({ start: 0, end: text.length });
+    if (exact.length >= WHOLE_TEXT_FUZZY_MIN) tries.push({ start: 0, end: text.length });
     for (var j = 0; j < tries.length; j++) {
       var span = fuzzyInRegion(text, exact, tries[j].start - exact.length, tries[j].end + exact.length, target);
       if (span && span.score >= FUZZY_THRESHOLD) {
