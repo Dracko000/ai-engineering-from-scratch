@@ -245,7 +245,7 @@ INFO 10-18 19:14:22 [loggers.py:320] Engine 000: Avg prompt throughput: 960.0 to
 | 0.5, mixed | 159.6 / 169.6 | 325 / 353 ms | 87.8 / 81.4 ms | 363 / 191 ms |
 | 0.0, mixed | 158.2 / 174.4 | 283 / 284 ms | 86.7 / 75.0 ms | 302 / 202 ms |
 
-**We measured** a different winner for each traffic shape. With fixed lengths, the two engines tied on throughput. They made the same trade as at a full pool. vLLM gave the first token sooner, 1,499 against 1,775 ms, outside the seed spread. SGLang kept the stream smooth, with a P99 ITL of 81 against 502 ms.
+**We measured** a different winner for each traffic shape. With fixed lengths, the two engines tied on throughput. They made the same trade as at a full pool. The vLLM server gave the first token sooner, 1,499 against 1,775 ms, outside the seed spread. SGLang kept the stream smooth, with a P99 ITL of 81 against 502 ms.
 
 With mixed lengths, vLLM led. At a ratio of 0.5 it gave 169.6 against 159.6 tok/s, 6 percent more and outside the seed spread. Its median time per token was 81.4 against 87.8 ms, and its P99 ITL was 191 against 363 ms. At 0.0 the throughput ranges overlapped, and vLLM still had the lower time per token and the lower P99 ITL. Every median clock was 1,410 MHz or higher.
 
