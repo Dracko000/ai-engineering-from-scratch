@@ -136,7 +136,7 @@
     ui.hint.textContent = 'Highlighted text. Press Enter to change the colour or note.';
     ui.sharedHint = make('span', 'aifs-hl-sr', { id: 'aifsHlSharedHint' });
     ui.sharedHint.textContent = 'Shared highlight. Press Enter to read the note or add it to your highlights.';
-    ui.toast = make('div', 'aifs-hl-toast aifs-hl-ui', { role: 'status' });
+    ui.toast = make('div', 'aifs-hl-toast aifs-hl-ui', { 'aria-hidden': 'true' });
     ui.toast.hidden = true;
 
     ui.toolbar = make('div', 'aifs-hl-toolbar aifs-hl-ui', { role: 'toolbar', 'aria-label': 'Highlight the selected text' });
@@ -357,10 +357,17 @@
     });
     window.addEventListener('hashchange', function () {
       if (!state.article) return;
-      readShare();
-      paint(false);
-      renderPanel();
-      revealHashTarget();
+      var hash = window.location.hash || '';
+      if (hash.indexOf(SHARE_PREFIX) === 0) {
+        readShare();
+        paint(false);
+        renderPanel();
+      } else if (/^#hl-/.test(hash)) {
+        revealHashTarget();
+      }
+    });
+    ['wheel', 'touchstart', 'keydown', 'pointerdown'].forEach(function (name) {
+      window.addEventListener(name, function () { state.userMoved = true; }, { passive: true, capture: true });
     });
     Store.onChange(function (_, meta) {
       if (state.painting || !state.article) return;
@@ -486,8 +493,13 @@
     var height = ui.toolbar.offsetHeight;
     var docWidth = document.documentElement.clientWidth;
     var tts = document.getElementById('ttsFromHere');
-    var below = coarsePointer() || rect.top < 120 || (tts && !tts.hidden);
+    var ttsShown = !!(tts && !tts.hidden);
+    var below = coarsePointer() || rect.top < 120 || ttsShown;
     var top = below ? rect.bottom + window.pageYOffset + 10 : rect.top + window.pageYOffset - height - 10;
+    if (below && ttsShown) {
+      var chip = tts.getBoundingClientRect();
+      if (chip.bottom + window.pageYOffset >= top - 4) top = Math.max(top, chip.bottom + window.pageYOffset + 8);
+    }
     var left = rect.left + window.pageXOffset + rect.width / 2 - width / 2;
     left = Math.max(window.pageXOffset + 8, Math.min(left, window.pageXOffset + docWidth - width - 8));
     ui.toolbar.style.top = Math.round(top) + 'px';
@@ -662,12 +674,13 @@
       var knownOrphan = state.orphanCache[cacheKey] === hash || (item.status === 'orphaned' && item.orphanHash === hash);
       var section = Anchor.sectionById(model, item.section);
       var hit = null;
+      var whole = !!persist && state.settled;
       if (!knownOrphan) {
-        hit = Anchor.locate(model.text, item, { regions: section ? [section] : [] });
-        if (hit && hit.method === 'fuzzy' && item.review === 'rejected') hit = null;
+        hit = Anchor.locate(model.text, item, { regions: section ? [section] : [], wholeText: whole });
+        if (hit && hit.method !== 'context' && item.review === 'rejected') hit = null;
       }
       if (!hit) {
-        state.orphanCache[cacheKey] = hash;
+        if (whole || item.quote.exact.length < 40) state.orphanCache[cacheKey] = hash;
         runtime[item.id] = { status: state.settled ? 'orphaned' : 'loading' };
         if (state.settled && (item.status !== 'orphaned' || item.orphanHash !== hash)) {
           patches[item.id] = { status: 'orphaned', orphanHash: hash };
@@ -675,16 +688,20 @@
         continue;
       }
       var fuzzy = hit.method === 'fuzzy';
-      var status = fuzzy || (item.status === 'moved' && item.review !== 'confirmed') ? 'moved' : 'anchored';
+      var uncertain = fuzzy || (hit.ambiguous && item.position.start !== hit.start);
+      var status = uncertain || (item.status === 'moved' && item.review !== 'confirmed') ? 'moved' : 'anchored';
       var confidence = fuzzy ? hit.confidence : (status === 'moved' ? item.confidence : hit.confidence);
       runtime[item.id] = { status: status, method: hit.method, confidence: confidence };
       var described = Anchor.describe(model.text, hit.start, hit.end);
       var sectionInfo = Anchor.describeSection(model, described.position.start, described.position.end);
       var patch = {};
       if (item.status !== status) patch.status = status;
-      if (fuzzy) {
+      if (uncertain) {
         patch.review = 'pending';
         patch.confidence = confidence;
+        if (!item.originalQuote) {
+          patch.originalQuote = { exact: item.quote.exact, prefix: item.quote.prefix, suffix: item.quote.suffix, position: item.position };
+        }
       }
       if (hit.method !== 'context' || item.position.start !== described.position.start || item.position.length !== described.position.length) {
         patch.quote = described.quote;
@@ -707,8 +724,13 @@
   function resolveShared(model, entries) {
     state.sharedRuntime = {};
     if (!state.shared || state.shared.path !== state.ctx.path) return;
+    var hash = textHash(model.text);
+    if (state.sharedHash !== hash) {
+      state.sharedHash = hash;
+      state.sharedHits = state.shared.items.map(function (item) { return Anchor.locate(model.text, item, { exactOnly: true }); });
+    }
     state.shared.items.forEach(function (item, index) {
-      var hit = Anchor.locate(model.text, item, {});
+      var hit = state.sharedHits[index];
       state.sharedRuntime[index] = hit ? 'found' : 'missing';
       if (hit) entries.push({ id: 's' + index, color: item.color, note: item.note, layer: 'shared', start: hit.start, end: hit.end, sharedIndex: index });
     });
@@ -719,6 +741,7 @@
     state.painting = true;
     stopObserving();
     var patches = {};
+    var focusedId = idFromTarget(document.activeElement);
     try {
       unpaint();
       var items = currentItems();
@@ -769,6 +792,10 @@
       state.painting = true;
       try { Store.updateMany(state.ctx.path, patches, true); } finally { state.painting = false; }
     }
+    if (focusedId && !(state.article.contains(document.activeElement) && document.activeElement !== document.body && idFromTarget(document.activeElement))) {
+      var again = firstMark(focusedId);
+      if (again && again.hasAttribute('tabindex')) again.focus({ preventScroll: true });
+    }
     updateLauncher();
     updateShareBar();
   }
@@ -818,6 +845,7 @@
 
   function scheduleSettle() {
     window.clearTimeout(state.settleTimer);
+    var delay = Math.max(0, Math.min(SETTLE_QUIET, state.settleDeadline - Date.now()));
     state.settleTimer = window.setTimeout(function () {
       if (!state.article) return;
       if (!asyncContentReady() && Date.now() < state.settleDeadline) {
@@ -829,9 +857,9 @@
       renderPanel();
       if (state.hashPending) {
         state.hashPending = false;
-        revealHashTarget();
+        if (!state.userMoved) revealHashTarget();
       }
-    }, SETTLE_QUIET);
+    }, delay);
   }
 
   function firstMark(id) {
@@ -855,6 +883,7 @@
   }
 
   function onSelectingClick(event) {
+    if (!event.detail) return;
     var control = event.target && event.target.closest ? event.target.closest(TEXT_BUTTONS) : null;
     if (!control || !state.article || !state.article.contains(control)) return;
     var selection = window.getSelection();
@@ -1013,6 +1042,15 @@
 
   function closeEditor(restoreFocus) {
     if (!state.editor) return;
+    if (!state.editor.shared && state.ctx && !Store.info().readOnly) {
+      var current = findItem(state.editor.id);
+      if (current && ui.editorNote.value !== (current.note || '')) {
+        var editing = state.editor;
+        state.editor = null;
+        if (Store.update(state.ctx.path, editing.id, { note: ui.editorNote.value })) announce('Note saved.');
+        state.editor = editing;
+      }
+    }
     var target = state.editor.returnFocus;
     var id = state.editor.id;
     var fromPanel = state.editor.fromPanel;
@@ -1066,6 +1104,7 @@
 
   function readShare() {
     state.shared = null;
+    state.sharedHash = '';
     var hash = window.location.hash || '';
     if (hash.indexOf(SHARE_PREFIX) !== 0) return;
     state.shared = Store.decodeShare(hash.slice(SHARE_PREFIX.length));
@@ -1118,7 +1157,7 @@
     if (!state.ctx) return;
     var link = shareUrl(state.ctx.path, ids);
     if (!link) {
-      toast('There is nothing to share on this page yet.');
+      toast(Store.info().lastError === 'share-too-large' ? 'Those highlights are too long for one link. Share fewer highlights, or use a sync file.' : 'There is nothing to share on this page yet.');
       return;
     }
     showShareLink(link);
@@ -1270,6 +1309,18 @@
 
   function renderPanel() {
     if (!ui.panel || ui.panel.hidden || !state.ctx) return;
+    var active = document.activeElement;
+    var focusRow = active && ui.list.contains(active) && active.closest('.aifs-hl-item');
+    var focusKey = focusRow ? { id: focusRow.getAttribute('data-hl-id'), action: active.getAttribute('data-action') || '', tag: active.tagName } : null;
+    renderPanelContent();
+    if (focusKey) {
+      var row = ui.list.querySelector('.aifs-hl-item[data-hl-id="' + focusKey.id + '"]');
+      var again = row && (focusKey.action ? row.querySelector('[data-action="' + focusKey.action + '"]') : row.querySelector(focusKey.tag === 'A' ? 'a' : 'button'));
+      (again || row || ui.list).focus();
+    }
+  }
+
+  function renderPanelContent() {
     var pageItems = currentItems();
     var all = Store.pages();
     var total = 0;
@@ -1403,11 +1454,13 @@
       announce('Re-anchor confirmed.');
       ui.list.focus();
     } else if (action === 'reject' && item) {
-      var restore = item.originalExact || item.quote.exact;
+      var original = item.originalQuote;
+      var restore = original ? { exact: original.exact, prefix: original.prefix, suffix: original.suffix } : { exact: item.originalExact || item.quote.exact, prefix: item.originalExact ? '' : item.quote.prefix, suffix: item.originalExact ? '' : item.quote.suffix };
       Store.update(state.ctx.path, id, {
         status: 'orphaned',
         review: 'rejected',
-        quote: { exact: restore, prefix: restore === item.quote.exact ? item.quote.prefix : '', suffix: restore === item.quote.exact ? item.quote.suffix : '' },
+        quote: restore,
+        position: original ? original.position : item.position,
         orphanHash: ''
       });
       announce('Re-anchor rejected. The highlight is now orphaned. Use Find again to attach it.');
@@ -1515,6 +1568,7 @@
     paint(false);
     renderPanel();
     state.hashPending = /^#hl-/.test(window.location.hash || '');
+    state.userMoved = false;
     revealHashTarget();
     if (state.hashPending && document.readyState !== 'complete') {
       window.addEventListener('load', revealHashTarget, { once: true });

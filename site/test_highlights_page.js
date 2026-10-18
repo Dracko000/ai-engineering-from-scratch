@@ -195,21 +195,21 @@ function fixturePages() {
     [LESSON]: {
       title: 'Vectors and Spaces',
       items: [
-        item('a1', { color: 'yellow', note: 'Remember the café example', quote: { exact: 'A vector is an ordered list of numbers.', prefix: '', suffix: '' }, position: { start: 1, end: 2, length: 1 } }),
+        item('a1', { color: 'yellow', note: 'Remember the caf\u00e9 example', quote: { exact: 'A vector is an ordered list of numbers.', prefix: '', suffix: '' }, position: { start: 1, end: 2, length: 1 } }),
         item('a2', { color: 'green', status: 'moved', review: 'pending', confidence: 0.874, quote: { exact: 'See [diagram 9f3ab2] for the dot product.', prefix: '', suffix: '' }, originalExact: 'See the diagram for the dot product.', createdAt: NOW - 20 * DAY, position: { start: 5, end: 6, length: 1 } }),
       ],
     },
     [LESSON_B]: {
       title: 'The Agent Loop',
       items: [
-        item('b1', { color: 'blue', status: 'orphaned', sectionTitle: 'Größe des Kontexts', quote: { exact: 'Naïve loops run forever. [figure agent-loop]', prefix: '', suffix: '' }, createdAt: NOW - 60 * DAY }),
-        item('b2', { color: 'pink', review: 'conflict', note: '日本語のメモ about retries', createdAt: NOW - 2 * DAY, position: { start: 30, end: 40, length: 10 } }),
+        item('b1', { color: 'blue', status: 'orphaned', sectionTitle: 'Gr\u00f6\u00dfe des Kontexts', quote: { exact: 'Na\u00efve loops run forever. [figure agent-loop]', prefix: '', suffix: '' }, createdAt: NOW - 60 * DAY }),
+        item('b2', { color: 'pink', review: 'conflict', note: '\u65e5\u672c\u8a9e\u306e\u30e1\u30e2 about retries', createdAt: NOW - 2 * DAY, position: { start: 30, end: 40, length: 10 } }),
       ],
     },
     [MANUAL]: {
       title: 'A2A 101',
       items: [
-        item('m1', { color: 'yellow', note: 'Résumé of the task lifecycle', lang: 'hi', createdAt: NOW - 3 * DAY }),
+        item('m1', { color: 'yellow', note: 'R\u00e9sum\u00e9 of the task lifecycle', lang: 'hi', createdAt: NOW - 3 * DAY }),
       ],
     },
   };
@@ -259,15 +259,15 @@ function storePages() {
 test('search folds case and accents and matches quotes, notes, original text, titles and sections', () => {
   const pages = storePages();
   const ids = query => page.filterPages(pages, criteria({ query }), NOW).groups.flatMap(group => group.items.map(entry => entry.id));
-  assert.equal(page.fold('  Café   NAÏVE  '), 'cafe naive');
+  assert.equal(page.fold('  Caf\u00e9   NA\u00cfVE  '), 'cafe naive');
   assert.deepEqual(ids('CAFE'), ['a1']);
   assert.deepEqual(ids('cafe ordered'), ['a1']);
   assert.deepEqual(ids('naive'), ['b1']);
   assert.deepEqual(ids('grosse'), []);
-  assert.deepEqual(ids('größe'), ['b1']);
-  assert.deepEqual(ids('GROẞE'.toLowerCase()), ['b1']);
+  assert.deepEqual(ids('gr\u00f6\u00dfe'), ['b1']);
+  assert.deepEqual(ids('GRO\u1e9eE'.toLowerCase()), ['b1']);
   assert.deepEqual(ids('resume lifecycle'), ['m1']);
-  assert.deepEqual(ids('日本語'), ['b2']);
+  assert.deepEqual(ids('\u65e5\u672c\u8a9e'), ['b2']);
   assert.deepEqual(ids('the diagram for'), ['a2']);
   assert.deepEqual(ids('agent loop'), ['b1', 'b2']);
   assert.deepEqual(ids('a2a'), ['m1']);
@@ -335,7 +335,7 @@ test('results group by page in store order and count everything shown', () => {
 test('status badges follow the labels the lesson page uses', () => {
   const label = fields => page.badges(item('x', fields)).map(badge => badge.label);
   assert.deepEqual(label({}), []);
-  assert.deepEqual(label({ status: 'moved', confidence: 0.874, review: 'pending' }), ['Re-anchored 87% · needs review']);
+  assert.deepEqual(label({ status: 'moved', confidence: 0.874, review: 'pending' }), ['Re-anchored 87% \u00b7 needs review']);
   assert.deepEqual(label({ status: 'moved', confidence: null, review: 'confirmed' }), ['Re-anchored']);
   assert.deepEqual(label({ status: 'orphaned' }), ['Orphaned']);
   assert.deepEqual(label({ review: 'conflict' }), ['Conflict copy']);
@@ -364,7 +364,7 @@ test('the page renders groups, escaped text, open links and badges', () => {
   assert.ok(container.textContent.includes('<script>alert(1)</script>'));
   assert.ok(container.textContent.includes('See [diagram] for the dot product.'));
   assert.ok(container.textContent.includes('Originally: See the diagram for the dot product.'));
-  assert.ok(container.textContent.includes('Re-anchored 87% · needs review'));
+  assert.ok(container.textContent.includes('Re-anchored 87% \u00b7 needs review'));
   assert.ok(container.textContent.includes('Conflict copy'));
   assert.ok(container.textContent.includes('Orphaned'));
   assert.equal($('hlpResults').hasAttribute('data-i18n-skip'), true);
@@ -376,7 +376,7 @@ test('the page renders groups, escaped text, open links and badges', () => {
 
 test('filter controls drive the rendered list and clear filters restores it', () => {
   const { $, keys, change, container, doc } = setup();
-  change($('hlpSearch'), 'CAFÉ');
+  change($('hlpSearch'), 'CAF\u00c9');
   assert.deepEqual(keys(), ['a1']);
   change($('hlpSearch'), '');
   container.find(node => node.getAttribute('data-color') === 'pink').click();
@@ -442,7 +442,7 @@ test('selection, select all shown, and exports of the selection or of everything
   assert.match(markdown.text, /^# Highlights/);
   assert.ok(markdown.text.includes('Source: https://example.test/lesson.html?path='));
   assert.ok(!markdown.text.includes('A vector is an ordered list'));
-  assert.ok(markdown.text.includes('Naïve loops run forever.'));
+  assert.ok(markdown.text.includes('Na\u00efve loops run forever.'));
   assert.ok(!markdown.text.includes('A2A 101'));
 
   change($('hlpKind'), 'manual');
@@ -594,4 +594,19 @@ test('the page is noindex, wired into routes, navigation and cards, and kept out
 
   const workflow = fs.readFileSync(path.join(root, '.github', 'workflows', 'curriculum.yml'), 'utf8');
   assert.match(workflow, /node --test site\/test_highlights_page\.js/);
+});
+
+test('a back/forward cache restore reloads the list from storage', () => {
+  const handlers = {};
+  const fakeWin = { addEventListener: (type, fn) => { handlers[type] = fn; } };
+  const ctx = setup(undefined, { window: fakeWin });
+  const before = ctx.items().length;
+  const state = JSON.parse(ctx.storage.getItem('aifs:highlights:v2'));
+  const first = Object.keys(state.pages)[0];
+  state.pages[first].items = state.pages[first].items.slice(1);
+  ctx.storage.setItem('aifs:highlights:v2', JSON.stringify(state));
+  handlers.pageshow({ persisted: false });
+  assert.equal(ctx.items().length, before);
+  handlers.pageshow({ persisted: true });
+  assert.equal(ctx.items().length, before - 1);
 });

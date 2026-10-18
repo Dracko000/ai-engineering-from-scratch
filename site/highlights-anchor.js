@@ -237,7 +237,7 @@
       var near = target >= 0 && Math.abs(chosen.start - target) <= Math.max(200, text.length * 0.02);
       if (chosen.score < SHORT_CONTEXT_MIN && !near) return null;
     }
-    return { start: chosen.start, end: chosen.end, method: 'quote', score: Math.min(1, 0.7 + chosen.score * 0.15) };
+    return { start: chosen.start, end: chosen.end, method: 'quote', score: Math.min(1, 0.7 + chosen.score * 0.15), ambiguous: top.length > 1 };
   }
 
   function bestEnd(text, from, to, pattern, maxErrors, target) {
@@ -382,7 +382,7 @@
     return scores.reduce(function (a, b) { return a + b; }, 0) / scores.length;
   }
 
-  function locateFuzzy(text, quote, target, regions) {
+  function locateFuzzy(text, quote, target, regions, wholeText) {
     var exact = quote.exact;
     if (exact.length < FUZZY_MIN_LENGTH) return null;
     var slack = Math.max(2000, exact.length * 4);
@@ -395,7 +395,7 @@
       }
     }
     if (target >= 0) tries.push({ start: target - slack, end: target + exact.length + slack });
-    if (exact.length >= WHOLE_TEXT_FUZZY_MIN) tries.push({ start: 0, end: text.length });
+    if (wholeText !== false && exact.length >= WHOLE_TEXT_FUZZY_MIN) tries.push({ start: 0, end: text.length });
     for (var j = 0; j < tries.length; j++) {
       var span = fuzzyInRegion(text, exact, tries[j].start - exact.length, tries[j].end + exact.length, target);
       if (!span || span.score < FUZZY_THRESHOLD) continue;
@@ -442,7 +442,8 @@
       exact.confidence = exact.method === 'context' ? 1 : Math.round(exact.score * 100) / 100;
       return exact;
     }
-    return locateFuzzy(text, quote, target, options.regions || []);
+    if (options.exactOnly) return null;
+    return locateFuzzy(text, quote, target, options.regions || [], options.wholeText);
   }
 
   function isElement(node) {

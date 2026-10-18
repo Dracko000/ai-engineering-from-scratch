@@ -724,3 +724,19 @@ test('the highlight scripts stay dependency free and comment free', () => {
     assert.doesNotMatch(source, /^\s*\/\/|\/\*/m, name);
   }
 });
+
+test('ambiguous exact matches are flagged, and exact-only or no-whole-text searches skip fuzzy work', () => {
+  const md = '## A\n\nWe compute the gradient here. Filler text that changes. We compute the gradient here.';
+  const before = modelOf(md);
+  const selector = select(before.text, 'compute the gradient', 0);
+  const edited = modelOf(md.replace('We compute the gradient here. Filler', 'Then we compute the gradient again. Filler'));
+  const hit = Anchor.locate(edited.text, { quote: { exact: 'compute the gradient', prefix: 'zz ', suffix: ' qq' }, position: selector.position });
+  assert.equal(hit.method, 'quote');
+  assert.equal(hit.ambiguous, true);
+  const longQuote = 'The optimizer updates every weight with the gradient and the learning rate value.';
+  const far = modelOf('## A\n\n' + 'Filler words. '.repeat(400) + longQuote.replace('every', 'each'));
+  const selector2 = { quote: { exact: longQuote, prefix: 'Filler words. ', suffix: '' }, position: { start: 0, end: longQuote.length, length: far.text.length } };
+  assert.ok(Anchor.locate(far.text, selector2));
+  assert.equal(Anchor.locate(far.text, selector2, { wholeText: false }), null);
+  assert.equal(Anchor.locate(far.text, selector2, { exactOnly: true }), null);
+});

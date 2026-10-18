@@ -421,3 +421,49 @@ test('a shared add that would exceed the budget keeps session-only highlights', 
   assert.equal(store.pages().reduce((n, page) => n + page.items.length, 0), before);
   assert.equal(store.page('phases/09-new/01-page'), null);
 });
+
+test('conflict copies never push a page past its item cap', () => {
+  const { store } = storeWith();
+  const ids = [];
+  for (let i = 0; i < 500; i++) ids.push(store.add(LESSON_PATH, sampleItem({ note: 'local ' + i, quote: { exact: 'q' + i } })).id);
+  const exported = JSON.parse(store.exportJson());
+  exported.pages[LESSON_PATH].items.slice(0, 20).forEach(item => { item.note = 'remote ' + item.id; item.updatedAt += 1000; });
+  const result = store.importJson(JSON.stringify(exported));
+  assert.deepEqual([result.updated, result.conflicts, result.skipped], [20, 0, 20]);
+  assert.equal(store.items(LESSON_PATH).length, 500);
+  assert.equal(StoreModule.create(fakeWindow(memoryStorage({ [KEY]: JSON.stringify({ schemaVersion: 2, pages: { [LESSON_PATH]: store.page(LESSON_PATH) } }) }))).info().lastError, '');
+});
+
+test('each different unreadable payload gets its own backup', () => {
+  const storage = memoryStorage({ [KEY]: '{first broken' });
+  StoreModule.create(fakeWindow(storage)).add(LESSON_PATH, sampleItem());
+  storage.setItem(KEY, '{second broken');
+  StoreModule.create(fakeWindow(storage)).add(LESSON_PATH, sampleItem());
+  const backups = [...storage.data.entries()].filter(([key]) => key.startsWith('aifs:highlights:v2:unreadable')).map(([, value]) => value).sort();
+  assert.deepEqual(backups, ['{first broken', '{second broken']);
+});
+
+test('ids and quotes named like object prototype members are kept', () => {
+  const raw = JSON.stringify({ schemaVersion: 2, pages: { [LESSON_PATH]: { items: [{ id: 'constructor', quote: { exact: 'a' } }, { id: 'toString', quote: { exact: 'b' } }, { id: '__proto__', quote: { exact: 'c' } }] } } });
+  const { store } = storeWith({ [KEY]: raw });
+  assert.deepEqual(store.items(LESSON_PATH).map(item => item.id).sort(), ['__proto__', 'constructor', 'toString']);
+  const shared = { path: MANUAL_PATH, title: 'M', items: ['toString', '__proto__', 'constructor'].map(exact => StoreModule.normalizeItem({ quote: { exact } })) };
+  assert.equal(store.addShared(shared), 3);
+});
+
+test('a share link does not rename an existing page, and oversized shares are refused', () => {
+  const { store } = storeWith();
+  store.add(LESSON_PATH, sampleItem(), { title: 'My title' });
+  const shared = { path: LESSON_PATH, title: 'Their title', items: [StoreModule.normalizeItem({ quote: { exact: 'new text' } })] };
+  assert.equal(store.addShared(shared), 1);
+  assert.equal(store.page(LESSON_PATH).title, 'My title');
+  for (let i = 0; i < 30; i++) store.add(MANUAL_PATH, sampleItem({ quote: { exact: 'z'.repeat(19000) + i } }));
+  assert.equal(store.share(MANUAL_PATH), '');
+  assert.equal(store.info().lastError, 'share-too-large');
+});
+
+test('the quote before a re-anchor is kept whole so a rejection can restore it', () => {
+  const item = StoreModule.normalizeItem({ quote: { exact: 'now' }, originalQuote: { exact: 'before', prefix: 'p ', suffix: ' s', position: { start: 4, end: 10, length: 99 } } });
+  assert.deepEqual(item.originalQuote, { exact: 'before', prefix: 'p ', suffix: ' s', position: { start: 4, end: 10, length: 99 } });
+  assert.equal(StoreModule.normalizeItem({ quote: { exact: 'x' }, originalQuote: { exact: '' } }).originalQuote, null);
+});

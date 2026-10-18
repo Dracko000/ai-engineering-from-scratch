@@ -22,6 +22,7 @@
   var MAX_TITLE = 200;
   var MAX_BYTES = 1500000;
   var MAX_SHARE_ITEMS = 100;
+  var MAX_SHARE_LENGTH = 200000;
   var PATH_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._\/-]{0,299}$/;
   var ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
   var LANG_PATTERN = /^[a-z]{2,3}(?:-[a-z0-9]{2,8})?$/;
@@ -87,6 +88,18 @@
     return LANG_PATTERN.test(lang) ? lang : 'en';
   }
 
+  function normalizeOriginal(raw) {
+    if (!raw || typeof raw !== 'object' || typeof raw.exact !== 'string' || !raw.exact.trim()) return null;
+    var position = raw.position && typeof raw.position === 'object' ? raw.position : {};
+    var start = offset(position.start);
+    return {
+      exact: text(raw.exact, MAX_EXACT),
+      prefix: text(raw.prefix, MAX_CONTEXT),
+      suffix: text(raw.suffix, MAX_CONTEXT),
+      position: { start: start, end: Math.max(start, offset(position.end)), length: offset(position.length) }
+    };
+  }
+
   function normalizeItem(raw) {
     if (!raw || typeof raw !== 'object') return null;
     var quote = raw.quote && typeof raw.quote === 'object' ? raw.quote : {};
@@ -109,6 +122,7 @@
         suffix: text(quote.suffix, MAX_CONTEXT)
       },
       originalExact: text(raw.originalExact, MAX_EXACT),
+      originalQuote: normalizeOriginal(raw.originalQuote),
       position: { start: start, end: end, length: offset(position.length) },
       section: text(raw.section, 200),
       sectionTitle: text(raw.sectionTitle, MAX_TITLE),
@@ -131,7 +145,7 @@
     page.title = text(raw.title, MAX_TITLE);
     if (KINDS.indexOf(raw.kind) >= 0 && raw.kind === kindOf(path)) page.kind = raw.kind;
     var items = Array.isArray(raw.items) ? raw.items : [];
-    var seen = {};
+    var seen = Object.create(null);
     var skipped = 0;
     for (var i = 0; i < items.length; i++) {
       var item = normalizeItem(items[i]);
@@ -321,7 +335,7 @@
   function decodeShare(value) {
     var parsed = null;
     try {
-      if (!value || String(value).length > 200000) return null;
+      if (!value || String(value).length > MAX_SHARE_LENGTH) return null;
       parsed = JSON.parse(fromBase64Url(value));
     } catch (_) {
       return null;
@@ -375,7 +389,12 @@
     function backupUnreadable(raw) {
       if (!storage) return;
       try {
-        if (!storage.getItem(BACKUP_KEY)) storage.setItem(BACKUP_KEY, raw);
+        var existing = storage.getItem(BACKUP_KEY);
+        if (!existing) storage.setItem(BACKUP_KEY, raw);
+        else if (existing !== raw) {
+          var key = BACKUP_KEY + ':' + hashText(raw);
+          if (!storage.getItem(key)) storage.setItem(key, raw);
+        }
       } catch (_) {}
     }
 
@@ -636,6 +655,10 @@
         for (var k = 0; k < target.items.length; k++) {
           if (target.items[k].id === copy.id) return;
         }
+        if (target.items.length >= MAX_ITEMS_PER_PAGE) {
+          result.skipped++;
+          return;
+        }
         target.items.push(copy);
         result.conflicts++;
       }
@@ -682,7 +705,13 @@
 
     function share(path, ids) {
       var payload = sharePayload(load(), path, ids);
-      return payload ? encodeShare(payload) : '';
+      if (!payload) return '';
+      var encoded = encodeShare(payload);
+      if (encoded.length > MAX_SHARE_LENGTH) {
+        lastError = 'share-too-large';
+        return '';
+      }
+      return encoded;
     }
 
     function addShared(shared, indexes) {
@@ -690,8 +719,9 @@
       var state = writable();
       if (!state) return 0;
       var snapshot = JSON.stringify(state);
-      var target = ensurePage(state, shared.path, { title: shared.title });
-      var keys = {};
+      var isNew = !own(state.pages, shared.path) || !state.pages[shared.path].title;
+      var target = ensurePage(state, shared.path, isNew ? { title: shared.title } : null);
+      var keys = Object.create(null);
       target.items.forEach(function (item) {
         keys[item.quote.exact] = true;
         if (item.originalExact) keys[item.originalExact] = true;

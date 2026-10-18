@@ -29,7 +29,7 @@
   function fold(value) {
     return String(value == null ? '' : value)
       .normalize('NFD')
-      .replace(/[̀-ͯ]/g, '')
+      .replace(/[\u0300-\u036f]/g, '')
       .toLowerCase()
       .replace(/\s+/g, ' ')
       .trim();
@@ -114,7 +114,7 @@
     if (item.status === 'moved') {
       var label = 'Re-anchored';
       if (typeof item.confidence === 'number' && isFinite(item.confidence)) label += ' ' + Math.round(item.confidence * 100) + '%';
-      if (item.review === 'pending') label += ' · needs review';
+      if (item.review === 'pending') label += ' \u00b7 needs review';
       out.push({ tone: 'moved', label: label });
     } else if (item.status === 'orphaned') {
       out.push({ tone: 'orphaned', label: 'Orphaned' });
@@ -234,7 +234,7 @@
 
   function preview(text, max) {
     var value = displayText(text).replace(/\s+/g, ' ').trim();
-    return value.length > max ? value.slice(0, max - 1) + '…' : value;
+    return value.length > max ? value.slice(0, max - 1) + '\u2026' : value;
   }
 
   function readFileText(file) {
@@ -505,7 +505,7 @@
           var headingId = 'hlpGroup' + uid;
           var head = add(el('div', { className: 'hlp-group-head' }),
             add(el('h2', { className: 'hlp-group-title', id: headingId }), el('a', { href: page.url }, page.title || page.path)),
-            el('p', { className: 'hlp-group-meta' }, (page.kind === 'manual' ? 'Manual' : 'Lesson') + ' · ' + plural(group.items.length, 'highlight')));
+            el('p', { className: 'hlp-group-meta' }, (page.kind === 'manual' ? 'Manual' : 'Lesson') + ' \u00b7 ' + plural(group.items.length, 'highlight')));
           var list = el('ol', { className: 'hlp-list' });
           group.items.forEach(function (item) { list.appendChild(renderItem(page, item)); });
           results.appendChild(add(el('section', { className: 'hlp-group', 'aria-labelledby': headingId }), head, list));
@@ -662,7 +662,7 @@
         syncResult.textContent = IMPORT_ERRORS['too-large'];
         return;
       }
-      syncResult.textContent = 'Importing ' + (file.name || 'file') + '…';
+      syncResult.textContent = 'Importing ' + (file.name || 'file') + '\u2026';
       return Promise.resolve(readFile(file)).then(function (text) {
         var result = store.importJson(String(text));
         render();
@@ -673,6 +673,9 @@
     });
 
     if (typeof store.onChange === 'function') store.onChange(function () { render(); });
+    if (env && env.window && typeof env.window.addEventListener === 'function' && typeof store.reload === 'function') {
+      env.window.addEventListener('pageshow', function (event) { if (event && event.persisted) store.reload(); });
+    }
     writeControls();
     render();
 
@@ -698,6 +701,7 @@
       var protocol = win.location && win.location.protocol;
       mount(container, win.AIFSHighlightStore, {
         document: win.document,
+        window: win,
         download: browserDownload(win),
         origin: protocol === 'https:' || protocol === 'http:' ? win.location.origin : ''
       });
