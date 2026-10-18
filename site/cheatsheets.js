@@ -122,7 +122,7 @@
           topics.forEach(function (topic) {
             entries.push({ topic: topic, title: topic.t, meta: 'Cheat sheet', href: '/cheatsheets/' + topic.i, text: (topic.t + ' ' + topic.i.replace(/-/g, ' ') + ' ' + (topic.k || '')).toLowerCase(), rank: 0 });
             topic.r.forEach(function (row) {
-              entries.push({ topic: topic, title: row[0], meta: topic.t + (row[1] ? ' · ' + row[1] : ''), href: '/cheatsheets/' + topic.i + '#' + row[2], text: (row[0] + ' ' + row[1] + ' ' + topic.t).toLowerCase(), rank: 1 });
+              entries.push({ topic: topic, title: row[0], meta: topic.t + (row[1] ? ' · ' + row[1] : ''), href: '/cheatsheets/' + topic.i + '#' + (topic.b ? topic.b[row[2]] : row[2]), text: (row[0] + ' ' + row[1] + ' ' + (row[3] || '') + ' ' + topic.t).toLowerCase(), rank: 1 });
             });
           });
           return entries;

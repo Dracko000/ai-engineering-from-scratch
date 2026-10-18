@@ -23,6 +23,7 @@ const COLUMNS = 4;
 const MAX_PAGES = 2;
 const PAGE_BUDGETS = [870, 930];
 const MAX_SUBTITLE = 120;
+const SEARCH_DETAIL = 60;
 const KIND_LABELS = { concept: 'Concepts', commands: 'Commands and APIs', comparison: 'Comparisons', debugging: 'Debugging', manual: 'Manuals', project: 'Projects' };
 const TRACKS = [
   ['foundations', 'Foundations', ['00', '01', '02', '03']],
@@ -75,7 +76,7 @@ const TABLE_SHAPES = {
   comparison: 'header',
 };
 const SOURCE_EXTENSIONS = /\.(?:md|py|ts|js|mjs|rs|jl|go|sh|txt|log|json|jsonl|yaml|yml|toml|csv)$/;
-const COMMENT = { bash: /\s{2,}#\s/, sh: /\s{2,}#\s/, python: /\s{2,}#\s/, py: /\s{2,}#\s/, yaml: /\s{2,}#\s/, text: /\s{2,}#\s/, typescript: /\s{2,}\/\/\s/, ts: /\s{2,}\/\/\s/, javascript: /\s{2,}\/\/\s/, js: /\s{2,}\/\/\s/, rust: /\s{2,}\/\/\s/ };
+const COMMENT = { bash: /\s{2,}#\s/, sh: /\s{2,}#\s/, python: /\s{2,}#\s/, py: /\s{2,}#\s/, yaml: /\s{2,}#\s/, text: /\s{2,}#\s/, typescript: /\s{2,}\/\/\s/, ts: /\s{2,}\/\/\s/, javascript: /\s{2,}\/\/\s/, js: /\s{2,}\/\/\s/, rust: /\s{2,}\/\/\s/, go: /\s{2,}\/\/\s/, tsx: /\s{2,}\/\/\s/ };
 const FULL_COMMENT = /^\s*(?:#|\/\/)\s?/;
 
 function escapeHtml(value) {
@@ -519,31 +520,83 @@ function textLength(html) {
 function estimateBlock(block) {
   const scale = block.span || 1;
   let h = 34;
-  if (TABLE_SHAPES[block.type]) {
-    const widths = block.type === 'troubleshooting' ? [14, 16, 20] : block.type === 'defaults' ? [12, 12, 16] : block.type === 'comparison' ? [12, 13, 13, 13, 13].slice(0, block.header.length) : [18, 22];
-    h += 16;
-    for (const row of block.rows) h += 6 + 17 * Math.max(...row.map((cell, index) => Math.ceil(plain(cell).length / (widths[index] * scale)) || 1));
+  if (block.type === 'comparison') {
+    const width = (36 * scale) / block.header.length;
+    const lines = cells => Math.max(...cells.map(cell => Math.ceil(plain(cell).length / width) || 1));
+    h += 24 + 17 * (lines(block.header) - 1);
+    for (const row of block.rows) h += 6 + 17 * lines(row);
+  } else if (TABLE_SHAPES[block.type]) {
+    const widths = TABLE_WIDTHS[block.type] || TABLE_WIDTHS.default;
+    h += block.type === 'defaults' ? 30 : 16;
+    for (const row of block.rows) h += 6 + 17 * Math.max(...row.map((cell, index) => cellLines(cell, widths[index] * scale)));
   } else if (block.type === 'annotated-code') {
-    h += 18 + block.code.reduce((sum, line) => sum + (line.trim() ? 17 * Math.max(1, Math.ceil(line.length / (34 * scale))) : 6), 0);
+    const pattern = COMMENT[block.lang] || COMMENT.bash;
+    const noted = block.code.some(line => pattern.test(line) && !FULL_COMMENT.test(line));
+    h += 18;
+    for (const line of block.code) {
+      if (!line.trim()) {
+        h += 6;
+        continue;
+      }
+      const match = FULL_COMMENT.test(line) ? null : pattern.exec(line);
+      const code = match ? line.slice(0, match.index) : line;
+      const note = match ? line.slice(match.index + match[0].length) : '';
+      const codeLines = Math.ceil(code.length / ((noted ? 28 : 54) * scale)) || 1;
+      const noteLines = note ? Math.ceil(note.length / (20 * scale)) : 1;
+      h += 17 * Math.max(codeLines, noteLines);
+    }
   } else if (block.type === 'architecture' || block.type === 'flow') {
     const svg = block.type === 'architecture' ? architectureSvg(block) : flowSvg(block);
     const viewBox = /viewBox="0 0 (\d+) (\d+)"/.exec(svg);
-    h += viewBox ? Number(viewBox[2]) * (330 * scale) / Number(viewBox[1]) : 200;
+    h += viewBox ? Number(viewBox[2]) * (350 * scale) / Number(viewBox[1]) : 200;
   } else {
     for (const item of block.items) {
       if (block.type === 'qa') h += 8 + 18 * (Math.ceil(plain(item.lead).length / (40 * scale)) + Math.ceil(plain(item.text).length / (44 * scale)));
       else h += 6 + 18 * Math.ceil((plain(item.lead).length + plain(item.text).length + 2) / (44 * scale));
     }
   }
+  const fromText = block.from.map(source => sourceLink(source).label).join(', ');
+  h += 13 * Math.max(0, Math.ceil(fromText.length / (50 * scale)) - 1);
   return h + 16;
 }
 
+const TABLE_WIDTHS = { troubleshooting: [13, 15, 15], defaults: [13, 10, 20], 'command-table': [21, 21], default: [17, 26] };
+
+function cellLines(cell, width) {
+  const text = plain(cell);
+  if (!/`/.test(cell)) return Math.ceil(text.length / width) || 1;
+  let lines = 1;
+  let used = 0;
+  for (const word of text.split(/(?<=[\s=,/])/).filter(Boolean)) {
+    const size = word.trimEnd().length;
+    if (used && used + size > width) {
+      lines += 1;
+      used = 0;
+    }
+    if (size > width) {
+      lines += Math.ceil(size / width) - 1;
+      used = size % width;
+    } else {
+      used += word.length;
+    }
+  }
+  return lines;
+}
 const ROW_UNIT = 8;
 const STRETCH_ROWS = 40;
 const BLOCK_GAP = 12;
 
 function layout(topic) {
   const heights = topic.blocks.map(estimateBlock);
+  const natural = topic.blocks.map((_, index) => index);
+  const first = packBlocks(topic, heights, natural);
+  if (first.pages <= MAX_PAGES) return first;
+  const tallest = natural.slice().sort((a, b) => heights[b] * (topic.blocks[b].span || 1) - heights[a] * (topic.blocks[a].span || 1) || a - b);
+  const second = packBlocks(topic, heights, tallest);
+  return second.pages < first.pages ? second : first;
+}
+
+function packBlocks(topic, heights, order) {
   const pages = [];
   const newPage = () => {
     const budget = Math.floor((PAGE_BUDGETS[pages.length] || PAGE_BUDGETS[PAGE_BUDGETS.length - 1]) / ROW_UNIT);
@@ -570,7 +623,9 @@ function layout(topic) {
     }
     return best && { ...best, span };
   };
-  const places = topic.blocks.map((block, index) => {
+  const places = [];
+  order.forEach(index => {
+    const block = topic.blocks[index];
     const rows = Math.ceil((heights[index] + BLOCK_GAP) / ROW_UNIT);
     let pageIndex = 0;
     let spot = null;
@@ -582,7 +637,7 @@ function layout(topic) {
       spot = fit(page, block, Math.min(rows, page.budget)) || { col: 0, start: 0, span: Math.min(block.span || 1, COLUMNS) };
     }
     for (let k = 0; k < spot.span; k++) pages[pageIndex].taken[spot.col + k].push([spot.start, spot.start + rows]);
-    return { page: pageIndex, col: spot.col + 1, span: spot.span, row: spot.start + 1, rows };
+    places[index] = { page: pageIndex, col: spot.col + 1, span: spot.span, row: spot.start + 1, rows };
   });
   const used = pages.map(page => Math.max(0, ...page.taken.flat().map(([, b]) => b)) * ROW_UNIT);
   for (const place of places) {
@@ -630,7 +685,7 @@ function topicCounts(topic) {
 
 function tileHtml(topic) {
   const counts = topicCounts(topic);
-  return `<li class="cs-tile" data-kind="${topic.kind}" style="--h:${topic.hue}"><a href="${topic.href}"><span class="cs-code" aria-hidden="true">${escapeHtml(topic.code)}</span><span class="cs-tile-name">${escapeHtml(topic.title)}</span><span class="cs-tile-sub">${escapeHtml(plain(topic.subtitle))}</span><span class="cs-tile-meta"><span class="cs-tile-kind">${KIND_LABELS[topic.kind]}</span>${counts.rows} rows · ${counts.diagrams} diagrams</span></a></li>`;
+  return `<li class="cs-tile" data-kind="${topic.kind}" style="--h:${topic.hue}"><a href="${topic.href}"><span class="cs-code" aria-hidden="true">${escapeHtml(topic.code)}</span><span class="cs-tile-name">${escapeHtml(topic.title)}</span><span class="cs-tile-sub">${escapeHtml(plain(topic.subtitle))}</span><span class="cs-tile-meta"><span class="cs-tile-kind">${KIND_LABELS[topic.kind]}</span>${counts.rows} rows · ${counts.diagrams} ${counts.diagrams === 1 ? 'diagram' : 'diagrams'}</span></a></li>`;
 }
 
 function indexMain(topics, year, phases) {
@@ -772,6 +827,15 @@ function phaseList(root, map) {
   });
 }
 
+function searchRow(title, rest, blockId, showDetail) {
+  const detail = plain(rest);
+  let shown = '';
+  if (showDetail) shown = detail.length <= SEARCH_DETAIL ? detail : `${detail.slice(0, SEARCH_DETAIL - 1)}…`;
+  const spans = (rest.match(/`[^`]+`/g) || []).join(' ').replace(/`/g, '');
+  const extra = factTokens(spans).filter(token => !shown.includes(token) && !title.includes(token));
+  return extra.length ? [title, shown, blockId, extra.join(' ')] : [title, shown, blockId];
+}
+
 function searchIndex(topics) {
   return topics.map(topic => ({
     i: topic.id,
@@ -779,10 +843,11 @@ function searchIndex(topics) {
     c: topic.code,
     h: topic.hue,
     k: topic.kind,
-    r: topic.blocks.flatMap(block => {
-      if (TABLE_SHAPES[block.type]) return block.rows.map(row => [plain(row[0]), plain(row.slice(1).join(' · ')), block.id]);
-      if (block.type === 'concepts' || block.type === 'glossary') return block.items.map(item => [plain(item.lead), plain(item.text), block.id]);
-      return [[plain(block.title), '', block.id]];
+    b: topic.blocks.map(block => block.id),
+    r: topic.blocks.flatMap((block, index) => {
+      if (TABLE_SHAPES[block.type]) return block.rows.map(row => searchRow(plain(row[0]), row.slice(1).join(' · '), index, block.type === 'task-table' || block.type === 'defaults'));
+      if (block.type === 'concepts' || block.type === 'glossary') return block.items.map(item => searchRow(plain(item.lead), item.text, index, block.type === 'glossary'));
+      return [[plain(block.title), '', index]];
     }),
   }));
 }
@@ -903,6 +968,59 @@ function checkTopic(topic, root = REPO_ROOT, cache = new Map()) {
   return problems;
 }
 
+const EMPTY_VALUES = /^(?:|-|n\/a|tbd|todo|not given|not covered|not listed|not stated|none stated|no number given|unknown)$/i;
+const QUALITY_RULES = {
+  concept: { doRows: 4, troubleRows: 3 },
+  commands: { doRows: 8, troubleRows: 3, code: true },
+  comparison: { doRows: 3, troubleRows: 3, compare: true },
+  debugging: { doRows: 4, troubleRows: 5 },
+  manual: { doRows: 8, troubleRows: 3, code: true },
+  project: { doRows: 6, troubleRows: 3 },
+};
+
+function blockSize(block) {
+  if (TABLE_SHAPES[block.type]) return block.rows.length;
+  if (block.type === 'annotated-code') return block.code.filter(line => line.trim()).length;
+  if (block.type === 'architecture') return block.nodes.length;
+  return (block.items || []).length;
+}
+
+function qualityReport(topic) {
+  const rules = QUALITY_RULES[topic.kind] || QUALITY_RULES.concept;
+  const checks = [];
+  const add = (name, pass, detail) => checks.push({ name, pass, detail });
+  const types = new Set(topic.blocks.map(block => block.type));
+  const rows = type => topic.blocks.filter(block => block.type === type).reduce((sum, block) => sum + block.rows.length, 0);
+  const doRows = rows('task-table') + rows('command-table');
+  add('blocks', topic.blocks.length >= 10 && topic.blocks.length <= 14, `${topic.blocks.length} blocks, 10 to 14 needed`);
+  add('variety', types.size >= 6, `${types.size} block types, 6 needed`);
+  add('tasks', doRows >= rules.doRows, `${doRows} task or command rows, ${rules.doRows} needed for a ${topic.kind} sheet`);
+  add('diagram', types.has('flow') || types.has('architecture'), 'a flow or architecture diagram');
+  add('troubleshooting', rows('troubleshooting') >= rules.troubleRows, `${rows('troubleshooting')} troubleshooting rows, ${rules.troubleRows} needed`);
+  add('recall', types.has('qa') || types.has('tips'), 'a qa or tips block');
+  if (rules.code) add('code', types.has('annotated-code'), 'an annotated-code block');
+  if (rules.compare) add('comparison', types.has('comparison'), 'a comparison table');
+  const emptyDefaults = topic.blocks.filter(block => block.type === 'defaults').flatMap(block => block.rows.filter(row => EMPTY_VALUES.test(plain(row[1])))).map(row => plain(row[0]));
+  add('defaults', !emptyDefaults.length, emptyDefaults.length ? `defaults without a value: ${emptyDefaults.join(', ')}` : 'every default has a value');
+  const minimum = { 'annotated-code': 3, architecture: 3, flow: 3 };
+  const thin = topic.blocks.filter(block => blockSize(block) < (minimum[block.type] || 2)).map(block => block.title);
+  add('thin', !thin.length, thin.length ? `thin blocks: ${thin.join(', ')}` : 'no thin block');
+  const seen = new Set();
+  const duplicates = [];
+  for (const block of topic.blocks) {
+    const keys = TABLE_SHAPES[block.type] ? block.rows.map(row => plain(row.join(' ')).toLowerCase()) : (block.items || []).map(item => plain(`${item.lead} ${item.text}`).toLowerCase());
+    for (const key of keys) {
+      if (seen.has(key)) duplicates.push(key);
+      seen.add(key);
+    }
+  }
+  add('duplicates', !duplicates.length, duplicates.length ? `duplicate rows: ${duplicates.slice(0, 3).join(' | ')}` : 'no duplicate row');
+  const { pages } = layout(topic);
+  add('fit', pages <= MAX_PAGES, `${pages} pages, ${MAX_PAGES} at most`);
+  const passed = checks.filter(check => check.pass).length;
+  return { id: topic.id, kind: topic.kind, score: Math.round((passed / checks.length) * 100), pass: passed === checks.length, failures: checks.filter(check => !check.pass).map(check => `${check.name}: ${check.detail}`) };
+}
+
 function checkLinks(built, root = REPO_ROOT) {
   const known = new Set(built.pages.map(page => page.href));
   const fixed = new Set(['/', '/catalog', '/roadmap', '/glossary', '/about', BASE]);
@@ -1018,7 +1136,14 @@ function writePrint(outDir, options = {}) {
   return built;
 }
 
+const CLI_FLAGS = new Set(['--check', '--check-topic', '--check-quality', '--status', '--print', '--edition', '--katex']);
+
 function main(argv) {
+  const unknown = argv.filter(arg => arg.startsWith('--') && !CLI_FLAGS.has(arg));
+  if (unknown.length) {
+    console.error(`Unknown option: ${unknown.join(', ')}. Options: ${Array.from(CLI_FLAGS).join(', ')}`);
+    return 2;
+  }
   const flag = name => argv.includes(name);
   const value = name => {
     const index = argv.indexOf(name);
@@ -1044,6 +1169,13 @@ function main(argv) {
     const built = writePrint(path.resolve(value('--print')), { edition: value('--edition') || undefined, katex });
     console.log(`Wrote the print edition of ${built.topics.length} topic posters to ${value('--print')}/print.html`);
     return 0;
+  }
+  if (flag('--check-quality')) {
+    const reports = loadTopics().map(qualityReport);
+    for (const report of reports) console.log(`${String(report.score).padStart(3)}  ${report.id}${report.pass ? '' : `  ${report.failures.join('; ')}`}`);
+    const failed = reports.filter(report => !report.pass);
+    console.log(`Quality: ${reports.length - failed.length} of ${reports.length} sheets pass the rubric. Mean score ${Math.round(reports.reduce((sum, report) => sum + report.score, 0) / reports.length)}.`);
+    return failed.length ? 1 : 0;
   }
   if (flag('--status')) {
     const topics = loadTopics();
@@ -1085,4 +1217,4 @@ function main(argv) {
 
 if (require.main === module) process.exitCode = main(process.argv.slice(2));
 
-module.exports = { trackOf, parseTopic, loadTopics, buildCheatsheets, writeCheatsheets, writePrint, printHtml, prerenderMath, checkTopic, checkLinks, coverage, layout, factTokens, blockFacts, architectureSvg, flowSvg, TYPES };
+module.exports = { qualityReport, QUALITY_RULES, trackOf, parseTopic, loadTopics, buildCheatsheets, writeCheatsheets, writePrint, printHtml, prerenderMath, checkTopic, checkLinks, coverage, layout, factTokens, blockFacts, architectureSvg, flowSvg, TYPES };

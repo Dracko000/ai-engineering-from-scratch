@@ -7,14 +7,25 @@ const sheets = require('../../site/build-cheatsheets');
 const topicMap = require('../../site/cheatsheet-topics');
 
 const ROOT = path.resolve(__dirname, '..', '..');
-const MODELS = { sonnet: 'claude-sonnet-5-5', opus: 'claude-opus-5-5' };
-const DEFAULT_MODEL = MODELS.sonnet;
+const MODELS = { haiku: 'claude-haiku-5-5', sonnet: 'claude-sonnet-5-5', opus: 'claude-opus-5-5' };
+const DEFAULT_MODEL = MODELS.haiku;
+const ESCALATION_MODEL = MODELS.sonnet;
+const PRICES = {
+  'claude-haiku-5-5': { input: 0.1, output: 0.5, cacheRead: 0.01, cacheWrite: 0.125, longFrom: 100000, longInput: 0.5, longOutput: 2.5 },
+  'claude-sonnet-5-5': { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
+  'claude-opus-5-5': { input: 4, output: 20, cacheRead: 0.2, cacheWrite: 5 },
+};
+const FALLBACK_MODELS = new Set([MODELS.sonnet, MODELS.opus]);
+const DEFAULT_TOKEN_BUDGET = 1500000;
 const MAX_RETRIES = 2;
-const MAX_TOKENS = 64000;
+const MAX_TOKENS = 20000;
 const MAX_FILE_CHARS = 60000;
-const MAX_BUNDLE_CHARS = 600000;
-const EXAMPLE_TOPIC = 'sglang-serving';
+const MAX_BUNDLE_CHARS = 300000;
+const BUNDLE_SKIP = /(?:^|\/)(?:tests?|__tests__|fixtures?|samples?)\/|(?:^|\/)test_[^/]*$|\.(?:test|spec)\.[jt]sx?$|\.(?:jsonl|csv|log)$|(?:^|\/)package\.json$/;
+const EXEMPLARS = { concept: 'agent-harness', commands: 'rag', comparison: 'serving-engines-compared' };
+const EVIDENCE_EXEMPLAR = 'rag';
 const FRONT_KEYS = ['id', 'title', 'code', 'subtitle', 'hue', 'sources', 'source_hash'];
+const KEEP_LINE = /`|\d|\b(?:default|error|fails?|failure|fix|use|when|must|never|always|returns?|raises?|flag|option|limit|timeout|retry|cost|latency)\b/i;
 
 function readText(root, rel) {
   return fs.readFileSync(path.join(root, rel), 'utf8');
@@ -28,47 +39,95 @@ function filePriority(file) {
   return 4;
 }
 
+function trimMarkdown(text) {
+  const out = [];
+  let fence = false;
+  for (const line of text.replace(/\r\n/g, '\n').split('\n')) {
+    if (/^\s*(?:```|~~~)/.test(line)) {
+      fence = !fence;
+      out.push(line);
+      continue;
+    }
+    if (fence || /^#{1,6}\s/.test(line) || /^\s*\|/.test(line) || /^\s*(?:[-*+]|\d+\.)\s/.test(line) || /^>\s/.test(line)) {
+      out.push(line);
+      continue;
+    }
+    if (!line.trim()) {
+      if (out.length && out[out.length - 1] !== '') out.push('');
+      continue;
+    }
+    const kept = line.split(/(?<=[.!?])\s+/).filter(sentence => KEEP_LINE.test(sentence));
+    if (kept.length) out.push(kept.join(' '));
+  }
+  return out.join('\n');
+}
+
+function sourceText(root, file) {
+  const text = readText(root, file);
+  return /\.md$/.test(file) ? trimMarkdown(text) : text;
+}
+
 function sourceBundle(entry, root = ROOT) {
-  const files = entry.sources.flatMap(source => topicMap.sourceFiles(source, root));
-  const ranked = files.map((file, index) => ({ file, index, size: fs.statSync(path.join(root, file)).size })).sort((a, b) => filePriority(a.file) - filePriority(b.file) || a.index - b.index);
+  const files = entry.sources.flatMap(source => topicMap.sourceFiles(source, root)).filter(file => !BUNDLE_SKIP.test(file));
+  const ranked = files.map((file, index) => ({ file, index, text: sourceText(root, file) })).sort((a, b) => filePriority(a.file) - filePriority(b.file) || a.index - b.index);
   const kept = [];
   const omitted = [];
   let total = 0;
   for (const item of ranked) {
-    if (item.size > MAX_FILE_CHARS || total + item.size > MAX_BUNDLE_CHARS) {
+    if (item.text.length > MAX_FILE_CHARS || total + item.text.length > MAX_BUNDLE_CHARS) {
       omitted.push(item.file);
       continue;
     }
     kept.push(item);
-    total += item.size;
+    total += item.text.length;
   }
   kept.sort((a, b) => a.index - b.index);
-  const text = kept.map(item => `=== ${item.file} ===\n${readText(root, item.file)}`).join('\n\n');
+  const text = kept.map(item => `=== ${item.file} ===\n${item.text}`).join('\n\n');
   return { text, files: kept.map(item => item.file), omitted, chars: total };
+}
+
+function rubricText() {
+  const lines = Object.entries(sheets.QUALITY_RULES).map(([kind, rule]) => `- \`${kind}\`: at least ${rule.doRows} task or command rows and ${rule.troubleRows} troubleshooting rows${rule.code ? ', and an annotated-code block' : ''}${rule.compare ? ', and a comparison table' : ''}.`);
+  return `## The quality rubric
+
+The build scores every poster with these rules. A poster must pass all of them.
+
+- 10 to 14 blocks, with at least 6 block types.
+- A flow or architecture diagram.
+- A qa or tips block.
+- Every defaults row has a real value. "Not given" and similar text are not values.
+- No thin block: a table or list has at least 2 rows. A code block, a diagram or a flow has at least 3 lines, nodes or steps.
+- No row or bullet appears two times.
+- The poster fits on 2 printed pages.
+- Per kind:
+${lines.join('\n')}`;
 }
 
 function systemPrompt(root = ROOT) {
   const parts = [
     readText(root, 'scripts/cheatsheets/prompt.md'),
+    rubricText(),
     `## The authoring guide (cheatsheets/AUTHORING.md)\n\n${readText(root, 'cheatsheets/AUTHORING.md')}`,
   ];
-  const example = `cheatsheets/${EXAMPLE_TOPIC}.md`;
-  const evidence = `cheatsheets/evidence/${EXAMPLE_TOPIC}.md`;
-  if (fs.existsSync(path.join(root, example))) parts.push(`## A finished poster (${example})\n\n${readText(root, example)}`);
-  if (fs.existsSync(path.join(root, evidence))) parts.push(`## Its evidence file (${evidence})\n\n${readText(root, evidence)}`);
+  for (const [kind, id] of Object.entries(EXEMPLARS)) {
+    const file = `cheatsheets/${id}.md`;
+    if (fs.existsSync(path.join(root, file))) parts.push(`## Example poster for the kind \`${kind}\` (${file})\n\n${readText(root, file)}`);
+  }
+  const evidence = `cheatsheets/evidence/${EVIDENCE_EXEMPLAR}.md`;
+  if (fs.existsSync(path.join(root, evidence))) parts.push(`## Example evidence file (${evidence})\n\n${readText(root, evidence)}`);
   return parts.join('\n\n');
 }
 
 function userPrompt(entry, bundle) {
   const omitted = bundle.omitted.length ? `\nThese source files were too large to include. Do not cite facts from them: ${bundle.omitted.join(', ')}\n` : '';
-  return `Write the poster and the evidence file for this topic.
+  return `Write the poster and the evidence file for this topic. Match the example poster for its kind.
 
 id: ${entry.id}
 title: ${entry.title}
 kind: ${entry.kind}
 sources: ${entry.sources.join(', ')}
 ${omitted}
-The source files follow.
+The source files follow. Long prose paragraphs are trimmed to the sentences that hold code, numbers, defaults, errors and rules.
 
 ${bundle.text}`;
 }
@@ -131,14 +190,26 @@ function normalizeTopic(text, entry, root = ROOT, taken = takenCodes(root, entry
   return { text: `---\n${head}\n---\n${split.body.replace(/^\n*/, '\n').replace(/\s*$/, '\n')}` };
 }
 
-function checkText(text, entry, root = ROOT) {
+function parsedTopic(text, entry) {
   const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'cheatsheet-')), `${entry.id}.md`);
   fs.writeFileSync(file, text);
   const topic = sheets.parseTopic(text, file);
   topic.file = `cheatsheets/${entry.id}.md`;
+  topic.kind = entry.kind;
+  return topic;
+}
+
+function checkText(text, entry, root = ROOT) {
+  const topic = parsedTopic(text, entry);
   const problems = sheets.checkTopic(topic, root).map(problem => problem.replace(`${topic.file}: `, ''));
   problems.push(...scopeProblems(topic, entry));
   return problems;
+}
+
+function qualityOf(text, entry) {
+  const topic = parsedTopic(text, entry);
+  if (topic.errors.length) return { score: 0, pass: false, failures: [] };
+  return sheets.qualityReport(topic);
 }
 
 function scopeProblems(topic, entry) {
@@ -170,56 +241,130 @@ function evidenceProblems(evidence, topicText, entry) {
   return problems;
 }
 
+function evaluateReply(message, entry, root) {
+  if (message.stop_reason === 'refusal') return { problems: ['the model declined the request'], refused: true };
+  if (message.stop_reason === 'max_tokens') return { problems: ['the reply reached the token limit before it finished. Write shorter files.'] };
+  const reply = parseReply(replyText(message));
+  if (reply.error) return { problems: [reply.error] };
+  const normal = normalizeTopic(reply.topic, entry, root);
+  if (normal.error) return { problems: [normal.error] };
+  const problems = checkText(normal.text, entry, root).concat(evidenceProblems(reply.evidence, normal.text, entry));
+  const quality = problems.some(problem => /unknown type|needs|no blocks|front matter/.test(problem)) ? { score: 0, pass: false, failures: [] } : qualityOf(normal.text, entry);
+  return { problems: problems.concat(quality.failures.map(failure => `rubric ${failure}`)), quality, text: normal.text, evidence: reply.evidence };
+}
+
 function replyText(message) {
   return message.content.filter(block => block.type === 'text').map(block => block.text).join('\n');
 }
 
-async function callModel(client, { model, system, messages }) {
-  const stream = client.beta.messages.stream({
+function requestFor(model, system, messages) {
+  const request = {
     model,
     max_tokens: MAX_TOKENS,
-    betas: ['server-side-fallback-2026-07-01'],
-    fallbacks: 'default',
-    output_config: { effort: 'high' },
+    output_config: { effort: model === MODELS.haiku ? 'medium' : 'high' },
     system: [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }],
     messages,
-  });
-  return stream.finalMessage();
+  };
+  if (FALLBACK_MODELS.has(model)) {
+    request.betas = ['server-side-fallback-2026-07-01'];
+    request.fallbacks = 'default';
+  }
+  return request;
 }
 
-async function generateTopic({ entry, client, model = DEFAULT_MODEL, root = ROOT, log = () => {}, write = true }) {
+async function callModel(client, { model, system, messages }) {
+  return client.beta.messages.stream(requestFor(model, system, messages)).finalMessage();
+}
+
+function emptyUsage() {
+  return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, calls: 0, cost: 0 };
+}
+
+function callCost(usage, model) {
+  const price = PRICES[model];
+  if (!price) return 0;
+  const input = usage.input_tokens || 0;
+  const read = usage.cache_read_input_tokens || 0;
+  const write = usage.cache_creation_input_tokens || 0;
+  const long = price.longFrom && input + read + write > price.longFrom;
+  const inputRate = long ? price.longInput : price.input;
+  const outputRate = long ? price.longOutput : price.output;
+  return (input * inputRate + (usage.output_tokens || 0) * outputRate + read * price.cacheRead + write * price.cacheWrite) / 1e6;
+}
+
+function addCall(total, usage, model) {
+  if (!usage) return total;
+  total.input += usage.input_tokens || 0;
+  total.output += usage.output_tokens || 0;
+  total.cacheRead += usage.cache_read_input_tokens || 0;
+  total.cacheWrite += usage.cache_creation_input_tokens || 0;
+  total.calls += 1;
+  total.cost += callCost(usage, model);
+  return total;
+}
+
+function addUsage(total, usage) {
+  for (const key of Object.keys(total)) total[key] += usage[key] || 0;
+  return total;
+}
+
+function usageTokens(usage) {
+  return usage.input + usage.output + usage.cacheRead + usage.cacheWrite;
+}
+
+function problemList(problems) {
+  return problems.map(problem => `- ${problem}`).join('\n');
+}
+
+async function generateTopic({ entry, client, model = DEFAULT_MODEL, escalation = ESCALATION_MODEL, root = ROOT, log = () => {}, write = true, budgetLeft = Infinity }) {
+  const usage = emptyUsage();
   const bundle = sourceBundle(entry, root);
   if (bundle.omitted.length) log(`${entry.id}: left out ${bundle.omitted.length} large source files: ${bundle.omitted.join(', ')}`);
   const system = systemPrompt(root);
-  const messages = [{ role: 'user', content: userPrompt(entry, bundle) }];
-  let problems = [];
-  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-    const message = await callModel(client, { model, system, messages });
-    if (message.stop_reason === 'refusal') return { id: entry.id, ok: false, attempts: attempt + 1, problems: ['the model declined the request'] };
-    if (message.stop_reason === 'max_tokens') problems = ['the reply reached the token limit before it finished'];
-    else {
-      const reply = parseReply(replyText(message));
-      if (reply.error) problems = [reply.error];
-      else {
-        const normal = normalizeTopic(reply.topic, entry, root);
-        problems = normal.error ? [normal.error] : checkText(normal.text, entry, root).concat(evidenceProblems(reply.evidence, normal.text, entry));
-        if (!problems.length) {
-          if (write) {
-            fs.writeFileSync(path.join(root, 'cheatsheets', `${entry.id}.md`), normal.text);
-            fs.mkdirSync(path.join(root, 'cheatsheets', 'evidence'), { recursive: true });
-            fs.writeFileSync(path.join(root, 'cheatsheets', 'evidence', `${entry.id}.md`), `${reply.evidence.replace(/\s*$/, '')}\n`);
-          }
-          log(`${entry.id}: passed on attempt ${attempt + 1}`);
-          return { id: entry.id, ok: true, attempts: attempt + 1, problems: [] };
-        }
-      }
+  const steps = [];
+  const call = async (callModelName, messages, step) => {
+    const message = await callModel(client, { model: callModelName, system, messages });
+    addCall(usage, message.usage, callModelName);
+    steps.push(step);
+    return message;
+  };
+  const finish = (result, extra) => ({ id: entry.id, usage, steps, ...result, ...extra });
+  const accept = (evaluation, producer) => {
+    if (write) {
+      fs.writeFileSync(path.join(root, 'cheatsheets', `${entry.id}.md`), evaluation.text);
+      fs.mkdirSync(path.join(root, 'cheatsheets', 'evidence'), { recursive: true });
+      fs.writeFileSync(path.join(root, 'cheatsheets', 'evidence', `${entry.id}.md`), `${evaluation.evidence.replace(/\s*$/, '')}\n`);
     }
-    log(`${entry.id}: attempt ${attempt + 1} has ${problems.length} problems`);
-    if (attempt === MAX_RETRIES) break;
+    log(`${entry.id}: passed with ${producer} after ${steps.join(', ')}. Rubric score ${evaluation.quality.score}.`);
+    return finish({ ok: true, model: producer, score: evaluation.quality.score, problems: [] });
+  };
+  const messages = [{ role: 'user', content: userPrompt(entry, bundle) }];
+  let message = await call(model, messages, `draft:${model}`);
+  let evaluation = evaluateReply(message, entry, root);
+  if (evaluation.refused) return finish({ ok: false, model, score: 0, problems: evaluation.problems });
+  if (!evaluation.problems.length) return accept(evaluation, model);
+  for (let round = 1; round <= MAX_RETRIES; round++) {
+    if (usageTokens(usage) >= budgetLeft) return finish({ ok: false, model, score: evaluation.quality ? evaluation.quality.score : 0, problems: ['the token budget ran out before the next retry'] });
+    log(`${entry.id}: round ${round} fixes ${evaluation.problems.length} problems`);
     messages.push({ role: 'assistant', content: message.content });
-    messages.push({ role: 'user', content: `The build found these problems in your poster:\n\n${problems.map(problem => `- ${problem}`).join('\n')}\n\nReply again with both complete files, fixed.` });
+    messages.push({ role: 'user', content: `The checks found these problems:\n\n${problemList(evaluation.problems)}\n\nCritique your draft. Compare it with the example poster for the kind "${entry.kind}" and with the rubric. List the specific edits that fix each problem: which block, which row, what to remove and what to write. Remove a fact that is not in the from files. Do not write the files yet.` });
+    const critique = await call(model, messages, `critique:${model}`);
+    messages.push({ role: 'assistant', content: critique.content });
+    messages.push({ role: 'user', content: 'Apply every edit in your critique. Reply with both complete files in the <topic> and <evidence> parts.' });
+    message = await call(model, messages, `revise:${model}`);
+    evaluation = evaluateReply(message, entry, root);
+    if (evaluation.refused) return finish({ ok: false, model, score: 0, problems: evaluation.problems });
+    if (!evaluation.problems.length) return accept(evaluation, model);
   }
-  return { id: entry.id, ok: false, attempts: MAX_RETRIES + 1, problems };
+  if (escalation && escalation !== model && usageTokens(usage) < budgetLeft) {
+    log(`${entry.id}: escalated to ${escalation}`);
+    const draft = evaluation.text ? `\n\nThe last draft follows.\n\n<topic>\n${evaluation.text}\n</topic>\n<evidence>\n${evaluation.evidence || ''}\n</evidence>` : '';
+    const escalated = await call(escalation, [{ role: 'user', content: `${userPrompt(entry, bundle)}\n\nA smaller model wrote a draft that failed these checks:\n\n${problemList(evaluation.problems)}${draft}\n\nWrite both files again so that every check passes.` }], `escalate:${escalation}`);
+    const final = evaluateReply(escalated, entry, root);
+    if (!final.problems.length) return accept(final, escalation);
+    evaluation = final;
+  }
+  return finish({ ok: false, model, score: evaluation.quality ? evaluation.quality.score : 0, problems: evaluation.problems });
 }
 
 function stampTopic(entry, root = ROOT) {
@@ -259,7 +404,7 @@ async function main(argv, { client, root = ROOT, out = console } = {}) {
     out.log(JSON.stringify(current, null, 2));
     return 0;
   }
-  const valueFlags = new Set(['--model', '--limit', '--summary']);
+  const valueFlags = new Set(['--model', '--escalate', '--limit', '--summary', '--token-budget']);
   const named = argv.filter((arg, index) => !arg.startsWith('--') && !valueFlags.has(argv[index - 1]));
   let ids = named.length ? named : [];
   if (flag('--missing')) ids = ids.concat(current.missing);
@@ -271,6 +416,7 @@ async function main(argv, { client, root = ROOT, out = console } = {}) {
     return 1;
   }
   const limit = Number(value('--limit')) || ids.length;
+  const notStarted = ids.slice(limit);
   ids = ids.slice(0, limit);
   if (flag('--stamp')) {
     for (const id of ids) stampTopic(byId.get(id), root);
@@ -294,18 +440,41 @@ async function main(argv, { client, root = ROOT, out = console } = {}) {
   }
   const api = client || createClient();
   const model = resolveModel(value('--model'));
+  const escalation = flag('--no-escalate') ? '' : resolveModel(value('--escalate') || 'sonnet');
+  const budget = Number(value('--token-budget')) || DEFAULT_TOKEN_BUDGET;
+  const total = emptyUsage();
   const results = [];
+  const skipped = notStarted.slice();
   for (const id of ids) {
+    if (usageTokens(total) >= budget) {
+      skipped.push(id);
+      continue;
+    }
     try {
-      results.push(await generateTopic({ entry: byId.get(id), client: api, model, root, log: line => out.log(line) }));
+      const result = await generateTopic({ entry: byId.get(id), client: api, model, escalation, root, log: line => out.log(line), budgetLeft: budget - usageTokens(total) });
+      addUsage(total, result.usage);
+      results.push(result);
     } catch (error) {
-      results.push({ id, ok: false, attempts: 0, problems: [String(error && error.message || error)] });
+      results.push({ id, ok: false, model, score: 0, steps: [], problems: [String(error && error.message || error)], usage: emptyUsage() });
       out.error(`${id}: ${error && error.message || error}`);
     }
   }
-  const summary = { model, written: results.filter(result => result.ok).map(result => result.id), failed: results.filter(result => !result.ok) };
+  if (skipped.length) out.log(`Not started because of the topic cap or the token budget: ${skipped.join(', ')}`);
+  const summary = {
+    model,
+    escalation,
+    budget,
+    usage: total,
+    tokens: usageTokens(total),
+    cost: total.cost,
+    written: results.filter(result => result.ok).map(result => result.id),
+    escalated: results.filter(result => result.ok && result.model !== model).map(result => result.id),
+    failed: results.filter(result => !result.ok).map(({ id, steps, problems }) => ({ id, steps, problems })),
+    skipped,
+    topics: results.map(({ id, ok, model: producer, score, steps, usage }) => ({ id, ok, model: producer, score, steps, tokens: usageTokens(usage), cost: usage.cost })),
+  };
   if (value('--summary')) fs.writeFileSync(value('--summary'), `${JSON.stringify(summary, null, 2)}\n`);
-  out.log(`Wrote ${summary.written.length} sheets. ${summary.failed.length} topics failed.`);
+  out.log(`Wrote ${summary.written.length} sheets (${summary.escalated.length} escalated). ${summary.failed.length} topics failed. Tokens: ${summary.tokens}, estimated cost $${summary.cost.toFixed(2)}.`);
   for (const failure of summary.failed) out.error(`${failure.id}: ${failure.problems.slice(0, 5).join(' | ')}`);
   return summary.failed.length ? 1 : 0;
 }
@@ -319,4 +488,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { MODELS, DEFAULT_MODEL, MAX_RETRIES, sourceBundle, systemPrompt, userPrompt, parseReply, normalizeTopic, checkText, evidenceProblems, scopeProblems, generateTopic, stampTopic, codeCandidates, main };
+module.exports = { MODELS, DEFAULT_MODEL, ESCALATION_MODEL, MAX_RETRIES, PRICES, DEFAULT_TOKEN_BUDGET, EXEMPLARS, callCost, requestFor, trimMarkdown, sourceBundle, systemPrompt, userPrompt, parseReply, normalizeTopic, checkText, qualityOf, evidenceProblems, scopeProblems, generateTopic, stampTopic, codeCandidates, main };

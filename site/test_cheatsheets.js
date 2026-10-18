@@ -190,8 +190,17 @@ test('search covers every table row and term', () => {
     const entry = index.find(item => item.i === topic.id);
     const rows = topic.blocks.filter(block => block.rows).reduce((sum, block) => sum + block.rows.length, 0);
     assert.ok(entry.r.length >= rows, topic.id);
-    for (const row of entry.r) assert.ok(topic.blocks.some(block => block.id === row[2]));
+    for (const row of entry.r) assert.ok(topic.blocks[row[2]] && entry.b[row[2]] === topic.blocks[row[2]].id);
   }
+});
+
+test('the search index stays small and still finds flags in long cells', () => {
+  const built = sheets.buildCheatsheets({ edition: '2026-01-01' });
+  const gzipped = require('node:zlib').gzipSync(built.search).length;
+  assert.ok(gzipped < 200000, `search.json is ${gzipped} bytes gzipped`);
+  const index = JSON.parse(built.search);
+  const sglang = index.find(item => item.i === 'sglang-serving');
+  assert.ok(sglang.r.some(row => row.join(' ').includes('--mem-fraction-static')));
 });
 
 test('the print edition carries the attribution and renders math ahead of time', () => {

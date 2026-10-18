@@ -1,12 +1,12 @@
 You write one cheat sheet poster for the course AI Engineering from Scratch. The poster is a reference that a learner keeps open while they work. It is not a summary of a lesson.
 
-You get the topic entry from `cheatsheets/topics.yaml`, the text of every source file of the topic, the authoring guide and one finished example. Write the poster file and its evidence file.
+You get the topic entry from `cheatsheets/topics.yaml`, the source files of the topic, the authoring guide, the quality rubric and three finished example posters, one for each common kind. Write the poster file and its evidence file. Match the example for the kind of the topic in depth, density and block choice.
 
 ## Rules for the poster
 
 - Use a `defaults` table only for settings and their default values. Use a `comparison` table to set options side by side.
 - Follow the authoring guide exactly: the front matter, the block heading lines, the `key: value` lines and the body shape of each block type.
-- Write 10 to 13 blocks. Use at least six different block types. Include at least one diagram (`architecture` or `flow`), one table of tasks or commands, one `troubleshooting` or `defaults` table and one `qa` or `tips` block.
+- Pass every rule of the quality rubric. Write 10 to 13 blocks with at least six block types, a diagram (`architecture` or `flow`), a `troubleshooting` table and a `qa` or `tips` block.
 - Fit the kind of the topic:
   - `concept`: definitions, formulas, a diagram of the mechanism, the numbers that matter, and the mistakes people make.
   - `commands`: tasks with the exact code or command, flags, defaults, and fixes for errors.

@@ -79,6 +79,27 @@ test('the source hash covers docs/en.md and code, not translations or quizzes', 
   assert.notEqual(topicMap.sourceHash(['phases/01-a/01-b'], root), before);
 });
 
+test('every sheet passes the quality rubric', () => {
+  const failing = sheets.loadTopics(ROOT).map(sheets.qualityReport).filter(report => !report.pass);
+  assert.deepEqual(failing.map(report => `${report.id}: ${report.failures.join('; ')}`), []);
+});
+
+test('the rubric reports thin blocks, duplicates, empty defaults and a missing diagram', () => {
+  const topic = sheets.parseTopic(`---\nid: demo\ntitle: Demo\nsubtitle: Demo.\nhue: 1\nsources: x\n---\n\n## Tasks\ntype: task-table\nfrom: x\n\n| Task | Code |\n|---|---|\n| Run | Go |\n| Run | Go |\n\n## Defaults\ntype: defaults\nfrom: x\n\n| Setting | Default | Note |\n|---|---|---|\n| Port | Not given | HTTP |\n| Host | 0.0.0.0 | Bind |\n\n## Tips\ntype: tips\nfrom: x\n\n- Only one tip.\n`, 'demo.md');
+  topic.kind = 'commands';
+  const report = sheets.qualityReport(topic);
+  assert.equal(report.pass, false);
+  const text = report.failures.join('\n');
+  assert.match(text, /blocks: 3 blocks/);
+  assert.match(text, /diagram/);
+  assert.match(text, /tasks: 2 task or command rows, 8 needed/);
+  assert.match(text, /code: an annotated-code block/);
+  assert.match(text, /defaults without a value: Port/);
+  assert.match(text, /thin blocks: Tips/);
+  assert.match(text, /duplicate rows: run go/);
+  assert.ok(report.score < 60);
+});
+
 test('every sheet records a source hash', () => {
   for (const topic of sheets.loadTopics(ROOT)) assert.match(topic.sourceHash, /^[0-9a-f]{16}$/, topic.file);
 });

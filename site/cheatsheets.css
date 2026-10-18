@@ -299,7 +299,31 @@
 .cs-table {
   width: 100%;
   border-collapse: collapse;
-  table-layout: auto;
+  table-layout: fixed;
+}
+
+.cs-table th:first-child {
+  width: 40%;
+}
+
+.cs-cols-3 th:first-child {
+  width: 30%;
+}
+
+.cs-t-command-table th:first-child {
+  width: 50%;
+}
+
+.cs-t-defaults th:nth-child(2) {
+  width: 24%;
+}
+
+.cs-t-comparison th:first-child {
+  width: 20%;
+}
+
+.cs-table .cs-cmd {
+  overflow-wrap: anywhere;
 }
 
 .cs-table thead th {
@@ -341,10 +365,7 @@
   width: 30%;
 }
 
-.cs-t-command-table tbody th,
-.cs-t-defaults tbody th {
-  width: auto;
-}
+
 
 .cs-t-comparison tbody th {
   width: 22%;
@@ -1031,9 +1052,14 @@
   }
 }
 
-.cs-grid > .cs-t-architecture > .cs-bb,
-.cs-grid > .cs-t-flow > .cs-bb {
+.cs-grid > .cs-t-architecture > .cs-bb {
   display: flex;
   flex-direction: column;
   justify-content: center;
+}
+
+.cs-grid > .cs-t-flow > .cs-bb {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
 }

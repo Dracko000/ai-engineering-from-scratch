@@ -94,6 +94,9 @@ jobs:
           node --test $tests
       - name: Every lesson in a topic, every fact in its from files, two pages at most, no broken link, same bytes twice
         run: node site/build-cheatsheets.js --check
+      - name: Quality rubric on every sheet
+        if: hashFiles('site/cheatsheet-topics.js') != ''
+        run: node site/build-cheatsheets.js --check-quality
 
   pdf:
     if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'

@@ -83,3 +83,7 @@ When you add a lesson, add it to a topic in the map. When you change the sources
 ## Stale and missing sheets
 
 `node site/build-cheatsheets.js --status` lists the topics that have no sheet and the sheets whose source files changed after they were written. The workflow `.github/workflows/cheatsheets-generate.yml` writes these sheets with `scripts/cheatsheets/generate.js` and opens a pull request for review. To write one sheet on your machine, set `ANTHROPIC_API_KEY`, install `@anthropic-ai/sdk` and run `node scripts/cheatsheets/generate.js <id>`. Add `--model opus` for the larger model. The script runs the fact check on each reply. It sends the problems back to the model two times at most, and it writes nothing for a topic that still fails.
+
+## Quality rubric
+
+`node site/build-cheatsheets.js --check-quality` scores every sheet and fails when a sheet misses a rule. The rules: 10 to 14 blocks, at least 6 block types, a flow or architecture diagram, a qa or tips block, a minimum number of task or command rows and troubleshooting rows for the kind of the topic, an annotated-code block for `commands` and `manual` topics, a comparison table for `comparison` topics, a real value in every defaults row, no thin block, no duplicate row, and 2 printed pages at most.
