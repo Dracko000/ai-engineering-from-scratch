@@ -154,7 +154,7 @@ id: fig-7-2d
 kind: chart
 title: Forty-eight GRPO steps on a GB10
 claim: Over 48 steps the raw reward went up from a mean of 0.636 to 0.758, and the share of cut samples went down from 0.33 to 0.08.
-caption: Raw reward and the share of samples cut at 1,024 tokens for each step of the default seed. The dashed line is the raw reward of seed 2. The means are over the first 8 and the last 8 steps. From capture/gpu/summary/miles-gb10.json.
+caption: Raw reward and the share of samples cut at 1,024 tokens for each step of the default seed. The dashed lines are the raw rewards of seeds 2 and 3. The means are over the first 8 and the last 8 steps. From capture/gpu/summary/miles-gb10.json.
 ```
 
 From one step to the next the reward changed by as much as 0.207, from 0.801 at step 30 to 0.594 at step 31. Read the trend from the 8-step means, not from one step.
@@ -165,11 +165,11 @@ The last log lines also need a note. The SGLang scheduler printed `crashed with 
 
 Two log lines are worth knowing before you trust a run. About 30 percent of the samples hit the 1,024-token limit, so the reward includes answers cut off before the end. And SGLang printed `post-warmup freeze_gc failed` once at startup. Training ran normally after it, so the warning cost nothing here.
 
-### A second seed
+### Two more seeds
 
-We ran the same 48 steps again with `MILES_SEED=2`, which sets the train seed and the rollout seed. The GB10 shut down three times under this load, each time 10 to 15 minutes into the run. So this run had a guard. A script paused the container when the GPU reached 84 C, and resumed it at 74 C or after 2 minutes.
+We ran the same 48 steps twice more, with `MILES_SEED=2` and `MILES_SEED=3`. The variable sets the train seed and the rollout seed. The GB10 shut down three times under this load, each time 10 to 15 minutes into the run. So these runs had a guard. A script paused the container when the GPU reached 84 C, and resumed it at 74 C or after 2 minutes.
 
-The container was paused for about 60 percent of the 5 hours. A pause does not change what the model computes, so the reward, the lengths, the cut share, and the log-probability gap are valid. The rollout times are not, and we do not report them.
+During seed 2 the container was paused for about 60 percent of the 5 hours. A pause does not change what the model computes, so the reward, the lengths, the cut share, and the log-probability gap are valid. The rollout times are not, and we do not report them for seeds 2 and 3.
 
 ```listing
 title: the last step of seed 2
@@ -182,14 +182,14 @@ metrics.py:94 - perf 47: {'rollout/raw_reward_unfiltered': 0.6484375, 'rollout/n
 Job 'raysubmit_y4umCbEa8Qp5Bbad' succeeded
 ```
 
-| Mean, first 8 steps / last 8 steps | Default seed | Seed 2 |
-|---|---|---|
-| Raw reward | 0.636 / 0.758 | 0.653 / 0.736 |
-| Response length, tokens | 724 / 447 | 712 / 480 |
-| Share cut at 1,024 tokens | 0.33 / 0.08 | 0.30 / 0.12 |
-| Log-probability gap | 0.0153 / 0.0146 | 0.0153 / 0.0150 |
+| Mean, first 8 steps / last 8 steps | Default seed | Seed 2 | Seed 3 |
+|---|---|---|---|
+| Raw reward | 0.636 / 0.758 | 0.653 / 0.736 | 0.614 / 0.766 |
+| Response length, tokens | 724 / 447 | 712 / 480 | 734 / 456 |
+| Share cut at 1,024 tokens | 0.33 / 0.08 | 0.30 / 0.12 | 0.34 / 0.09 |
+| Log-probability gap | 0.0153 / 0.0146 | 0.0153 / 0.0150 | 0.0156 / 0.0146 |
 
-**We measured** the same result with the second seed. The reward went up, the responses got shorter, and fewer of them were cut. The log-probability gap stayed between 0.0138 and 0.0161 in all 48 steps. The largest change in reward from one step to the next was 0.160.
+**We measured** the same result with all three seeds. The reward went up, the responses got shorter, and fewer of them were cut. The log-probability gap stayed between 0.0136 and 0.0164 in all 144 steps. The largest change in reward from one step to the next was 0.207, 0.160, and 0.203 for the three seeds.
 
 ### True on-policy did not start on a GB10
 
@@ -253,4 +253,4 @@ That branch is a fair summary of this section. RL asks a serving engine for thin
 - Alert on the rollout server's own errors, because the trainer can keep waiting on a dead engine.
 ```
 
-Sources: Miles at v0.1.2 (a22fd824): train.py, release-lock.json, docker/Dockerfile, docs/developer/versions.md, miles/ray/rollout/inference_controller.py, miles/backends/training_utils/weight_update/protocol.py, session.py, protocols/broadcast.py, protocols/cuda_ipc.py, protocols/p2p.py, protocols/delta.py, miles/true_on_policy/model_profiles.py, docs/advanced/p2p-weight-transfer.md; SGLang at v0.5.22: python/sglang/srt/entrypoints/http_server.py, python/sglang/srt/managers/io_struct.py (PauseGenerationReqInput), python/sglang/srt/managers/scheduler_components/weight_updater.py, python/sglang/srt/constants.py, python/sglang/srt/arg_groups/fields/exec_.py, python/sglang/srt/arg_groups/choices.py, python/sglang/srt/arg_groups/attention_hook.py, python/sglang/srt/layers/logprob_processor.py, docs/docs/advanced_features/sglang_for_rl.mdx; Miles issues #860, #1485, #3277, #3714; RadixArk and LMSYS posts: lmsys.org/blog/2025-11-19-miles and lmsys.org/blog/2026-08-18-miles-v0-1. Miles at 08752a12: miles/backends/fsdp_utils/actor.py, miles/true_on_policy/schema.py, examples/infra_features/true_on_policy/run_simple.py and run_simple_amd_triton.py. capture/gpu/miles_grpo.py, capture/gpu/miles_summary.py, capture/gpu/out-miles/plain-excerpt.log, capture/gpu/out-miles/plain-48-excerpt.log, capture/gpu/out-miles/plain-48-s2-excerpt.log, capture/gpu/out-miles/plain-48-s2-thermostat.log, capture/gpu/out-miles/true-on-policy-error.log, capture/gpu/summary/miles-gb10.json. capture/gpu/out-miles/true-on-policy-fa3-error.log.
+Sources: Miles at v0.1.2 (a22fd824): train.py, release-lock.json, docker/Dockerfile, docs/developer/versions.md, miles/ray/rollout/inference_controller.py, miles/backends/training_utils/weight_update/protocol.py, session.py, protocols/broadcast.py, protocols/cuda_ipc.py, protocols/p2p.py, protocols/delta.py, miles/true_on_policy/model_profiles.py, docs/advanced/p2p-weight-transfer.md; SGLang at v0.5.22: python/sglang/srt/entrypoints/http_server.py, python/sglang/srt/managers/io_struct.py (PauseGenerationReqInput), python/sglang/srt/managers/scheduler_components/weight_updater.py, python/sglang/srt/constants.py, python/sglang/srt/arg_groups/fields/exec_.py, python/sglang/srt/arg_groups/choices.py, python/sglang/srt/arg_groups/attention_hook.py, python/sglang/srt/layers/logprob_processor.py, docs/docs/advanced_features/sglang_for_rl.mdx; Miles issues #860, #1485, #3277, #3714; RadixArk and LMSYS posts: lmsys.org/blog/2025-11-19-miles and lmsys.org/blog/2026-08-18-miles-v0-1. Miles at 08752a12: miles/backends/fsdp_utils/actor.py, miles/true_on_policy/schema.py, examples/infra_features/true_on_policy/run_simple.py and run_simple_amd_triton.py. capture/gpu/miles_grpo.py, capture/gpu/miles_summary.py, capture/gpu/out-miles/plain-excerpt.log, capture/gpu/out-miles/plain-48-excerpt.log, capture/gpu/out-miles/plain-48-s2-excerpt.log, capture/gpu/out-miles/plain-48-s3-excerpt.log, capture/gpu/out-miles/plain-48-thermostat.log, capture/gpu/out-miles/true-on-policy-error.log, capture/gpu/summary/miles-gb10.json. capture/gpu/out-miles/true-on-policy-fa3-error.log.
