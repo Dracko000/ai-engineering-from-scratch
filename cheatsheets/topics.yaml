@@ -148,7 +148,7 @@
     - phases/19-capstone-projects/65-hybrid-retrieval-bm25-dense
 
 - id: inference-optimization
-  title: Inference Optimization: KV Cache, Quantization, Batching
+  title: "Inference Optimization: KV Cache, Quantization, Batching"
   kind: concept
   sources:
     - phases/07-transformers-deep-dive/12-kv-cache-flash-attention
@@ -741,7 +741,7 @@
     - phases/12-multimodal-ai/20-omni-models-thinker-talker
 
 - id: positional-encoding
-  title: Positional Encoding: Sinusoidal, RoPE, ALiBi
+  title: "Positional Encoding: Sinusoidal, RoPE, ALiBi"
   kind: comparison
   sources:
     - phases/07-transformers-deep-dive/04-positional-encoding
@@ -776,7 +776,7 @@
     - phases/10-llms-from-scratch/21-jamba-hybrid-ssm-transformer
 
 - id: speculative-decoding
-  title: Speculative Decoding: Draft, EAGLE, MTP
+  title: "Speculative Decoding: Draft, EAGLE, MTP"
   kind: comparison
   sources:
     - phases/07-transformers-deep-dive/16-speculative-decoding
@@ -1015,7 +1015,7 @@
     - projects/memory-server
 
 - id: vlm-model-families
-  title: Open VLM Families: LLaVA, Qwen-VL, InternVL
+  title: "Open VLM Families: LLaVA, Qwen-VL, InternVL"
   kind: comparison
   sources:
     - phases/12-multimodal-ai/05-llava-visual-instruction-tuning
@@ -1102,7 +1102,7 @@
     - phases/13-tools-and-protocols/31-mcp-conformance-versioning-and-operations
 
 - id: agent-skills
-  title: Agent Skills: Discovery, Invocation, Routing
+  title: "Agent Skills: Discovery, Invocation, Routing"
   kind: commands
   sources:
     - phases/13-tools-and-protocols/22-skills-and-agent-sdks
@@ -1174,7 +1174,7 @@
     - phases/11-llm-engineering/02-few-shot-cot
 
 - id: agent-planning
-  title: Agent Planning: Workflows, HTN, Plan-Execute
+  title: "Agent Planning: Workflows, HTN, Plan-Execute"
   kind: concept
   sources:
     - phases/14-agent-engineering/11-planning-htn-and-evolutionary
@@ -1191,7 +1191,7 @@
     - phases/11-llm-engineering/09-function-calling
 
 - id: agent-benchmarks
-  title: Agent Benchmarks: SWE-bench to OSWorld
+  title: "Agent Benchmarks: SWE-bench to OSWorld"
   kind: comparison
   sources:
     - phases/14-agent-engineering/19-benchmarks-swebench-gaia
@@ -1283,7 +1283,7 @@
     - phases/19-capstone-projects/05-autonomous-research-agent
 
 - id: coding-agents
-  title: Coding Agents: Landscape and Capstones
+  title: "Coding Agents: Landscape and Capstones"
   kind: comparison
   sources:
     - phases/15-autonomous-systems/09-coding-agent-landscape
@@ -1426,7 +1426,7 @@
     - phases/10-llms-from-scratch/11-quantization
 
 - id: alignment-training
-  title: Alignment Training: Instructions, DPO Family, RLAIF
+  title: "Alignment Training: Instructions, DPO Family, RLAIF"
   kind: comparison
   sources:
     - phases/18-ethics-safety-alignment/01-instruction-following-alignment-signal

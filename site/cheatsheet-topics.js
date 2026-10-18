@@ -12,6 +12,19 @@ const SKIP_DIRS = new Set(['node_modules', '__pycache__', 'figures', 'media', 's
 const SKIP_FILES = new Set(['quiz.json', 'package-lock.json', '.gitkeep']);
 const MAX_FILE_BYTES = 400000;
 
+function scalar(value, where, errors) {
+  if (/^".*"$/.test(value)) {
+    try {
+      return JSON.parse(value);
+    } catch (_) {
+      errors.push(`${where}: the quoted value is not valid`);
+      return value;
+    }
+  }
+  if (/: |^[\[\]{}&*!|>'"%@`#]| #/.test(value)) errors.push(`${where}: put double quotes around "${value}"`);
+  return value;
+}
+
 function parseTopicMap(text, file = MAP_FILE) {
   const errors = [];
   const topics = [];
@@ -47,7 +60,7 @@ function parseTopicMap(text, file = MAP_FILE) {
       if (field[2]) errors.push(`${where}: list the sources on their own lines`);
       return;
     }
-    current[field[1]] = field[2];
+    current[field[1]] = scalar(field[2], where, errors);
   });
   const seen = new Set();
   for (const topic of topics) {

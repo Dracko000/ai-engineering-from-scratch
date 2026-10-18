@@ -76,7 +76,7 @@ jobs:
           else
             ids="$(node -e 'const s=require(process.argv[1]);console.log([...s.missing,...s.stale].join(" "))' "$RUNNER_TEMP/status.json")"
           fi
-          ids="$(echo $ids | tr ' ' '\n' | grep -E '^[a-z0-9-]+$' | head -n "$LIMIT" | tr '\n' ' ')"
+          ids="$(echo $ids | tr ' ' '\n' | { grep -E '^[a-z0-9-]+$' || true; } | head -n "$LIMIT" | tr '\n' ' ')"
           echo "ids=$ids" >> "$GITHUB_OUTPUT"
           if [ -z "$ids" ]; then echo "::notice title=Cheat sheets::Every topic has a current sheet. Nothing to do."; fi
       - name: Install the writer tools outside the repository

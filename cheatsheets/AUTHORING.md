@@ -49,6 +49,7 @@ Each block starts with a `## ` heading. The heading is the label on the coloured
 | `flow` | teal | numbered list: `1. **Actor**: what happens`. The build draws numbered steps |
 | `architecture` | teal | a fenced `arch` block with `node` and `edge` lines, see below |
 | `defaults` | amber | table: `\| Setting \| Default \| Note \|` |
+| `comparison` | slate | table with 3 to 5 columns: `\| Factor \| Option A \| Option B \|`. The first column names what you compare. Each other column is one option |
 | `troubleshooting` | red | table: `\| Symptom \| Cause \| Fix \|` |
 | `qa` | green | bullets: `- **Question?** Answer.` |
 | `tips` | green | bullets |

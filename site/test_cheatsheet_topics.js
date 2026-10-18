@@ -29,6 +29,10 @@ test('the topic map parses and reports bad entries', () => {
   assert.match(bad, /unexpected line "colour: red"/);
   assert.match(bad, /appears twice/);
   assert.match(bad, /needs sources/);
+  const quoted = topicMap.parseTopicMap('- id: demo\n  title: "Demo: one"\n  kind: concept\n  sources:\n    - x\n');
+  assert.deepEqual(quoted.errors, []);
+  assert.equal(quoted.topics[0].title, 'Demo: one');
+  assert.match(topicMap.parseTopicMap('- id: demo\n  title: Demo: one\n  kind: concept\n  sources:\n    - x\n').errors.join('\n'), /put double quotes/);
 });
 
 test('every lesson, manual and project of the repository is in a topic', () => {

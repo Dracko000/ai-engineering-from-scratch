@@ -51,8 +51,10 @@ from: ${LESSON}
 `;
 }
 
-function reply(topic) {
-  return { stop_reason: 'end_turn', content: [{ type: 'text', text: `<topic>\n${topic}\n</topic>\n<evidence>\n# Evidence: cheatsheets/demo-serving.md\n\n## Tasks (task-table, 2)\n- serve --port: d:3\n</evidence>` }] };
+const EVIDENCE = '# Evidence: cheatsheets/demo-serving.md\n\n## Tasks (task-table, 2)\n- serve --port: d:3\n- run_job: d:3\n\n## Tips (tips, 1)\n- start first: d:3\n';
+
+function reply(topic, evidence = EVIDENCE) {
+  return { stop_reason: 'end_turn', content: [{ type: 'text', text: `<topic>\n${topic}\n</topic>\n<evidence>\n${evidence}</evidence>` }] };
 }
 
 function fakeClient(replies) {
@@ -155,6 +157,38 @@ test('main without a client or a key stops with code 2', async () => {
   } finally {
     if (saved !== undefined) process.env.ANTHROPIC_API_KEY = saved;
   }
+});
+
+test('an evidence file without a heading, a section or line references is sent back', async () => {
+  const root = fixture();
+  const client = fakeClient([reply(poster('--port'), '# Evidence\n\n## Tasks\n- no line here\n'), reply(poster('--port'))]);
+  const result = await generate.generateTopic({ entry: entry(root), client, root });
+  assert.equal(result.ok, true);
+  assert.equal(result.attempts, 2);
+  const feedback = client.calls[1].messages[2].content;
+  assert.match(feedback, /must start with "# Evidence: cheatsheets\/demo-serving\.md"/);
+  assert.match(feedback, /no section for the block "Tips"/);
+  assert.match(feedback, /section for "Tasks" gives no path:line/);
+});
+
+test('a from path that climbs out of the topic sources is refused', async () => {
+  const root = fixture();
+  fs.mkdirSync(path.join(root, 'phases/01-demo/02-other/docs'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'phases/01-demo/02-other/docs/en.md'), 'serve --listen 8000\n');
+  const sneaky = poster('--listen').replace(`from: ${LESSON}/docs/en.md`, `from: ${LESSON}/../02-other/docs/en.md`);
+  const client = fakeClient([reply(sneaky), reply(sneaky), reply(sneaky)]);
+  const result = await generate.generateTopic({ entry: entry(root), client, root });
+  assert.equal(result.ok, false);
+  assert.ok(result.problems.some(problem => /not a plain repository path|not a source of this topic/.test(problem)));
+});
+
+test('stamping refuses a sheet whose blocks cite a removed source', () => {
+  const root = fixture();
+  fs.writeFileSync(path.join(root, 'cheatsheets/demo-serving.md'), poster('--port'));
+  const moved = { ...entry(root), sources: ['phases/01-demo/09-new'] };
+  assert.throws(() => generate.stampTopic(moved, root), /not a source of this topic/);
+  generate.stampTopic(entry(root), root);
+  assert.match(fs.readFileSync(path.join(root, 'cheatsheets/demo-serving.md'), 'utf8'), /source_hash: [0-9a-f]{16}/);
 });
 
 test('codes avoid the codes that other sheets use', () => {

@@ -4,12 +4,13 @@ You get the topic entry from `cheatsheets/topics.yaml`, the text of every source
 
 ## Rules for the poster
 
+- Use a `defaults` table only for settings and their default values. Use a `comparison` table to set options side by side.
 - Follow the authoring guide exactly: the front matter, the block heading lines, the `key: value` lines and the body shape of each block type.
 - Write 10 to 13 blocks. Use at least six different block types. Include at least one diagram (`architecture` or `flow`), one table of tasks or commands, one `troubleshooting` or `defaults` table and one `qa` or `tips` block.
 - Fit the kind of the topic:
   - `concept`: definitions, formulas, a diagram of the mechanism, the numbers that matter, and the mistakes people make.
   - `commands`: tasks with the exact code or command, flags, defaults, and fixes for errors.
-  - `comparison`: a table that sets the options side by side, and a "use X when" block for each option.
+  - `comparison`: a `comparison` table that sets the options side by side, and a "use X when" block for each option.
   - `debugging`: symptoms, causes, checks and fixes first. Then the tools and the numbers to watch.
   - `manual`: the flags, commands, defaults and incidents of the manual.
   - `project`: what each project builds, how to run it, its inputs and outputs, and the checks that it passes.

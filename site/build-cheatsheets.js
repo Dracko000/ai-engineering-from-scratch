@@ -38,7 +38,6 @@ const TRACKS = [
   ['manuals', 'Manuals', []],
   ['projects', 'Projects', []],
 ];
-const SEARCH_DETAIL = 72;
 const FONT_LINK = 'https://fonts.googleapis.com/css2?family=VT323&family=Source+Serif+4:ital,opsz,wght@0,8..60,400..700;1,8..60,400..700&family=JetBrains+Mono:wght@400;500;700&display=swap';
 const THEME_SCRIPT = "(function(){var r=document.documentElement,s='';try{s=localStorage.getItem('theme')||'';}catch(_){}r.setAttribute('data-theme',s||(window.matchMedia&&matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'));function i(){var e=document.getElementById('themeIcon');if(e)e.textContent=r.getAttribute('data-theme')==='light'?'N':'D';}document.addEventListener('DOMContentLoaded',function(){i();var b=document.getElementById('themeToggle');if(b)b.addEventListener('click',function(){var n=r.getAttribute('data-theme')==='light'?'dark':'light';r.setAttribute('data-theme',n);try{localStorage.setItem('theme',n);}catch(_){}i();});});})();";
 const HEAD_ASSETS = '<link rel="stylesheet" href="/style.css">\n<link rel="stylesheet" href="/cheatsheets.css">';
@@ -53,6 +52,7 @@ const TYPES = {
   flow: { group: 'see', label: 'See' },
   architecture: { group: 'see', label: 'See' },
   defaults: { group: 'numbers', label: 'Numbers' },
+  comparison: { group: 'compare', label: 'Compare' },
   troubleshooting: { group: 'fix', label: 'Fix' },
   qa: { group: 'recall', label: 'Recall' },
   tips: { group: 'recall', label: 'Recall' },
@@ -62,6 +62,7 @@ const GROUPS = [
   ['do', 'Tasks and commands'],
   ['code', 'Annotated code'],
   ['see', 'Diagrams'],
+  ['compare', 'Comparisons'],
   ['numbers', 'Defaults and numbers'],
   ['fix', 'Troubleshooting'],
   ['recall', 'Questions and tips'],
@@ -71,6 +72,7 @@ const TABLE_SHAPES = {
   'command-table': 2,
   defaults: 3,
   troubleshooting: 3,
+  comparison: 'header',
 };
 const SOURCE_EXTENSIONS = /\.(?:md|py|ts|js|mjs|rs|jl|go|sh|txt|log|json|jsonl|yaml|yml|toml|csv)$/;
 const COMMENT = { bash: /\s{2,}#\s/, sh: /\s{2,}#\s/, python: /\s{2,}#\s/, py: /\s{2,}#\s/, yaml: /\s{2,}#\s/, text: /\s{2,}#\s/, typescript: /\s{2,}\/\/\s/, ts: /\s{2,}\/\/\s/, javascript: /\s{2,}\/\/\s/, js: /\s{2,}\/\/\s/, rust: /\s{2,}\/\/\s/ };
@@ -258,7 +260,7 @@ function parseTopic(text, file = '') {
     ids.add(id);
     const col = block.meta.col ? Number(block.meta.col) : 0;
     if (block.meta.col && !(col >= 1 && col <= COLUMNS)) errors.push(`${where}: col must be 1 to ${COLUMNS}`);
-    const defaultSpan = ['annotated-code', 'architecture', 'troubleshooting', 'defaults'].includes(type) ? 2 : 1;
+    const defaultSpan = ['annotated-code', 'architecture', 'troubleshooting', 'defaults', 'comparison'].includes(type) ? 2 : 1;
     const span = block.meta.span ? Number(block.meta.span) : defaultSpan;
     if (!(span >= 1 && span <= COLUMNS)) errors.push(`${where}: span must be 1 to ${COLUMNS}`);
     if (col && col + span - 1 > COLUMNS) errors.push(`${where}: col ${col} with span ${span} runs past column ${COLUMNS}`);
@@ -266,8 +268,10 @@ function parseTopic(text, file = '') {
     if (TABLE_SHAPES[type]) {
       const table = parseTable(block.body);
       if (!table.rows.length) errors.push(`${where}: the table has no rows`);
+      const width = TABLE_SHAPES[type] === 'header' ? table.header.length : TABLE_SHAPES[type];
+      if (TABLE_SHAPES[type] === 'header' && !(width >= 3 && width <= 5)) errors.push(`${where}: a comparison table needs 3 to 5 columns`);
       for (const row of table.rows) {
-        if (row.length !== TABLE_SHAPES[type]) errors.push(`${where}: row "${row.join(' | ')}" needs ${TABLE_SHAPES[type]} cells`);
+        if (row.length !== width) errors.push(`${where}: row "${row.join(' | ')}" needs ${width} cells`);
       }
       out.header = table.header;
       out.rows = table.rows;
@@ -516,7 +520,7 @@ function estimateBlock(block) {
   const scale = block.span || 1;
   let h = 34;
   if (TABLE_SHAPES[block.type]) {
-    const widths = block.type === 'troubleshooting' ? [14, 16, 20] : block.type === 'defaults' ? [12, 12, 16] : [18, 22];
+    const widths = block.type === 'troubleshooting' ? [14, 16, 20] : block.type === 'defaults' ? [12, 12, 16] : block.type === 'comparison' ? [12, 13, 13, 13, 13].slice(0, block.header.length) : [18, 22];
     h += 16;
     for (const row of block.rows) h += 6 + 17 * Math.max(...row.map((cell, index) => Math.ceil(plain(cell).length / (widths[index] * scale)) || 1));
   } else if (block.type === 'annotated-code') {
@@ -705,7 +709,7 @@ function trackOf(topic) {
   const counts = new Map();
   for (const source of topic.sources) {
     const phase = /^phases\/(\d{2})-/.exec(source);
-    if (phase) counts.set(phase[1], (counts.get(phase[1]) || 0) + 1);
+    if (phase) counts.set(phase[1], (counts.get(phase[1]) || 0) + (phase[1] === '19' ? 0.5 : 1));
   }
   const best = Array.from(counts).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0];
   if (!best) return topic.sources.some(source => source.startsWith('manuals/')) ? 'manuals' : 'projects';
@@ -768,11 +772,6 @@ function phaseList(root, map) {
   });
 }
 
-function clip(text) {
-  const value = plain(text);
-  return value.length > SEARCH_DETAIL ? `${value.slice(0, SEARCH_DETAIL - 1)}…` : value;
-}
-
 function searchIndex(topics) {
   return topics.map(topic => ({
     i: topic.id,
@@ -781,9 +780,9 @@ function searchIndex(topics) {
     h: topic.hue,
     k: topic.kind,
     r: topic.blocks.flatMap(block => {
-      if (TABLE_SHAPES[block.type]) return block.rows.map(row => [clip(row[0]), clip(row[1]), block.id]);
-      if (block.type === 'concepts' || block.type === 'glossary') return block.items.map(item => [clip(item.lead), clip(item.text), block.id]);
-      return [[clip(block.title), '', block.id]];
+      if (TABLE_SHAPES[block.type]) return block.rows.map(row => [plain(row[0]), plain(row.slice(1).join(' · ')), block.id]);
+      if (block.type === 'concepts' || block.type === 'glossary') return block.items.map(item => [plain(item.lead), plain(item.text), block.id]);
+      return [[plain(block.title), '', block.id]];
     }),
   }));
 }
@@ -887,6 +886,9 @@ function checkTopic(topic, root = REPO_ROOT, cache = new Map()) {
     if (!fs.existsSync(path.join(root, source))) problems.push(`${topic.file}: source ${source} does not exist`);
   }
   for (const block of topic.blocks) {
+    for (const source of block.from) {
+      if (path.posix.normalize(source) !== source || source.split('/').includes('..') || path.isAbsolute(source)) problems.push(`${topic.file}: block "${block.title}" names ${source}, which is not a plain repository path`);
+    }
     const missing = block.from.filter(source => !fs.existsSync(path.join(root, source)));
     for (const source of missing) problems.push(`${topic.file}: block "${block.title}" names ${source}, which does not exist`);
     if (missing.length) continue;

@@ -137,10 +137,35 @@ function checkText(text, entry, root = ROOT) {
   const topic = sheets.parseTopic(text, file);
   topic.file = `cheatsheets/${entry.id}.md`;
   const problems = sheets.checkTopic(topic, root).map(problem => problem.replace(`${topic.file}: `, ''));
+  problems.push(...scopeProblems(topic, entry));
+  return problems;
+}
+
+function scopeProblems(topic, entry) {
+  const problems = [];
   for (const block of topic.blocks) {
     for (const source of block.from) {
-      if (!entry.sources.some(allowed => source === allowed || source.startsWith(`${allowed}/`))) problems.push(`block "${block.title}" names ${source}, which is not a source of this topic`);
+      const plainPath = path.posix.normalize(source) === source && !source.split('/').includes('..');
+      if (!plainPath || !entry.sources.some(allowed => source === allowed || source.startsWith(`${allowed}/`))) problems.push(`block "${block.title}" names ${source}, which is not a source of this topic`);
     }
+  }
+  return problems;
+}
+
+function evidenceProblems(evidence, topicText, entry) {
+  const problems = [];
+  const lines = evidence.replace(/\r\n/g, '\n').split('\n');
+  if (lines[0] !== `# Evidence: cheatsheets/${entry.id}.md`) problems.push(`the evidence file must start with "# Evidence: cheatsheets/${entry.id}.md"`);
+  const sections = [];
+  for (const line of lines) {
+    if (line.startsWith('## ')) sections.push({ title: line.slice(3), refs: 0 });
+    else if (sections.length && /^\s*(?:[-*]|\d+\.)\s.*:\d+/.test(line)) sections[sections.length - 1].refs += 1;
+  }
+  const topic = sheets.parseTopic(topicText, `${entry.id}.md`);
+  for (const block of topic.blocks) {
+    const section = sections.find(item => item.title.includes(block.title));
+    if (!section) problems.push(`the evidence file has no section for the block "${block.title}"`);
+    else if (!section.refs) problems.push(`the evidence section for "${block.title}" gives no path:line`);
   }
   return problems;
 }
@@ -177,7 +202,7 @@ async function generateTopic({ entry, client, model = DEFAULT_MODEL, root = ROOT
       if (reply.error) problems = [reply.error];
       else {
         const normal = normalizeTopic(reply.topic, entry, root);
-        problems = normal.error ? [normal.error] : checkText(normal.text, entry, root);
+        problems = normal.error ? [normal.error] : checkText(normal.text, entry, root).concat(evidenceProblems(reply.evidence, normal.text, entry));
         if (!problems.length) {
           if (write) {
             fs.writeFileSync(path.join(root, 'cheatsheets', `${entry.id}.md`), normal.text);
@@ -201,6 +226,8 @@ function stampTopic(entry, root = ROOT) {
   const file = path.join(root, 'cheatsheets', `${entry.id}.md`);
   const normal = normalizeTopic(fs.readFileSync(file, 'utf8'), entry, root);
   if (normal.error) throw new Error(`${entry.id}: ${normal.error}`);
+  const scope = scopeProblems(sheets.parseTopic(normal.text, file), entry);
+  if (scope.length) throw new Error(`${entry.id}: ${scope.join('. ')}. Change the from lines first.`);
   fs.writeFileSync(file, normal.text);
 }
 
@@ -292,4 +319,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { MODELS, DEFAULT_MODEL, MAX_RETRIES, sourceBundle, systemPrompt, userPrompt, parseReply, normalizeTopic, checkText, generateTopic, stampTopic, codeCandidates, main };
+module.exports = { MODELS, DEFAULT_MODEL, MAX_RETRIES, sourceBundle, systemPrompt, userPrompt, parseReply, normalizeTopic, checkText, evidenceProblems, scopeProblems, generateTopic, stampTopic, codeCandidates, main };

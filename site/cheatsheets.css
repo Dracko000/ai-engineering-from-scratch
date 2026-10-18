@@ -5,6 +5,7 @@
   --g-code: #2b2b2b;
   --g-see: #0f7f78;
   --g-numbers: #a86a00;
+  --g-compare: #3d5a80;
   --g-fix: #c0392b;
   --g-recall: #2e7d32;
   --bar-ink: #ffffff;
@@ -25,6 +26,7 @@
   --g-code: #d8d6cc;
   --g-see: #5fd1c4;
   --g-numbers: #f0b44a;
+  --g-compare: #8fb3d9;
   --g-fix: #ff8a7a;
   --g-recall: #7fd38a;
   --bar-ink: #0a0d1a;
@@ -43,6 +45,7 @@
 .cs-g-code { --g: var(--g-code); }
 .cs-g-see { --g: var(--g-see); }
 .cs-g-numbers { --g: var(--g-numbers); }
+.cs-g-compare { --g: var(--g-compare); }
 .cs-g-fix { --g: var(--g-fix); }
 .cs-g-recall { --g: var(--g-recall); }
 
@@ -341,6 +344,14 @@
 .cs-t-command-table tbody th,
 .cs-t-defaults tbody th {
   width: auto;
+}
+
+.cs-t-comparison tbody th {
+  width: 22%;
+}
+
+.cs-t-comparison thead th:not(:first-child) {
+  color: var(--g);
 }
 
 .cs-page .cs-cmd {
@@ -811,7 +822,8 @@
 }
 
 .cs-tile[hidden],
-.cs-track[hidden] {
+.cs-track[hidden],
+.cs-track-nav a[hidden] {
   display: none;
 }
 
@@ -956,6 +968,7 @@
     --g-code: #2b2b2b;
     --g-see: #0f7f78;
     --g-numbers: #a86a00;
+    --g-compare: #3d5a80;
     --g-fix: #c0392b;
     --g-recall: #2e7d32;
     --bar-ink: #ffffff;

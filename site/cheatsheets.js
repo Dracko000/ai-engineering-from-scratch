@@ -191,6 +191,8 @@
         });
         section.hidden = !visible;
         shown += visible;
+        var link = document.querySelector('.cs-track-nav a[href$="#' + section.id + '"]');
+        if (link) link.hidden = !visible;
       });
       if (count) count.textContent = kind ? shown + (shown === 1 ? ' sheet shown' : ' sheets shown') : '';
     }
