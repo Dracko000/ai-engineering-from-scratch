@@ -41,6 +41,43 @@ mark.aifs-hl.aifs-hl-bg-yellow, .aifs-hl-atom.aifs-hl-bg-yellow { background: va
   cursor: pointer;
 }
 
+.lesson-figure.aifs-hl-atom,
+.mermaid-container.aifs-hl-atom,
+.m-fig-art.aifs-hl-atom,
+.math-display.aifs-hl-atom {
+  outline: 3px solid var(--hl-yellow-solid);
+  outline-offset: 4px;
+}
+
+.lesson-figure.aifs-hl-atom.aifs-hl-bg-green, .mermaid-container.aifs-hl-atom.aifs-hl-bg-green, .m-fig-art.aifs-hl-atom.aifs-hl-bg-green, .math-display.aifs-hl-atom.aifs-hl-bg-green { outline-color: var(--hl-green-solid); }
+.lesson-figure.aifs-hl-atom.aifs-hl-bg-blue, .mermaid-container.aifs-hl-atom.aifs-hl-bg-blue, .m-fig-art.aifs-hl-atom.aifs-hl-bg-blue, .math-display.aifs-hl-atom.aifs-hl-bg-blue { outline-color: var(--hl-blue-solid); }
+.lesson-figure.aifs-hl-atom.aifs-hl-bg-pink, .mermaid-container.aifs-hl-atom.aifs-hl-bg-pink, .m-fig-art.aifs-hl-atom.aifs-hl-bg-pink, .math-display.aifs-hl-atom.aifs-hl-bg-pink { outline-color: var(--hl-pink-solid); }
+
+mark.aifs-hl.aifs-hl-moved {
+  background-image: linear-gradient(to top, var(--hl-focus) 0, var(--hl-focus) 1px, transparent 1px);
+}
+
+mark.aifs-hl.aifs-hl-shared,
+.aifs-hl-atom.aifs-hl-shared {
+  background: transparent;
+  border-bottom: 2px dashed var(--hl-blue-solid);
+  border-radius: 0;
+}
+
+mark.aifs-hl.aifs-hl-approx,
+.aifs-hl-atom.aifs-hl-approx {
+  background: transparent;
+  border-bottom: 2px dotted var(--hl-pink-solid);
+  border-radius: 0;
+}
+
+.quiz-option-text,
+.lesson-action-step-title,
+.lesson-action-step-copy {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
 mark.aifs-hl mark.aifs-hl {
   background-image: linear-gradient(rgba(0, 0, 0, 0.06), rgba(0, 0, 0, 0.06));
 }
@@ -106,7 +143,104 @@ mark.aifs-hl.aifs-hl-flash {
   box-shadow: var(--shadow-hard, 3px 3px 0 #1a1a1a);
 }
 
+.aifs-hl-toolbar-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.aifs-hl-tool-primary {
+  background: var(--ink, #1a1a1a);
+  color: var(--bg, #fafaf5);
+}
+
+.aifs-hl-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 72px;
+  z-index: 1020;
+  max-width: min(460px, calc(100vw - 32px));
+  padding: 10px 14px;
+  font-family: var(--font-mono, monospace);
+  font-size: 0.74rem;
+  line-height: 1.45;
+  color: var(--bg, #fafaf5);
+  background: var(--ink, #1a1a1a);
+  border: 1px solid var(--ink, #1a1a1a);
+  transform: translateX(-50%);
+  box-sizing: border-box;
+}
+
+.aifs-hl-sharebar {
+  position: fixed;
+  left: 16px;
+  right: 16px;
+  top: 72px;
+  z-index: 890;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 10px 12px;
+  font-family: var(--font-mono, monospace);
+  color: var(--ink, #1a1a1a);
+  background: var(--bg-surface, #f3f1e8);
+  border: 1px dashed var(--hl-blue-solid);
+  box-shadow: var(--shadow-hard, 3px 3px 0 #1a1a1a);
+}
+
+.aifs-hl-sharebar-text {
+  flex: 1 1 240px;
+  margin: 0;
+  font-size: 0.74rem;
+  line-height: 1.45;
+}
+
+.aifs-hl-editor-quote {
+  margin: 0 0 10px;
+  font-family: var(--font-body, Georgia, serif);
+  font-size: 0.92rem;
+  line-height: 1.45;
+  border-left: 3px dashed var(--hl-blue-solid);
+  padding-left: 8px;
+}
+
+.aifs-hl-share-label {
+  display: block;
+  margin-bottom: 4px;
+}
+
+.aifs-hl-share-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px;
+  font-family: var(--font-mono, monospace);
+  font-size: 0.7rem;
+  color: var(--ink, #1a1a1a);
+  background: var(--bg, #fafaf5);
+  border: 1px solid var(--rule-soft, rgba(26, 26, 26, 0.16));
+}
+
+.aifs-hl-share-warn {
+  margin: 6px 0 0;
+}
+
+.aifs-hl-all-link {
+  flex-basis: 100%;
+}
+
+.aifs-hl-badge-conflict { color: #9a3412; }
+.aifs-hl-badge-approx { color: var(--hl-pink-solid); }
+
 .aifs-hl-toolbar[hidden],
+.aifs-hl-toolbar-group[hidden],
+.aifs-hl-toast[hidden],
+.aifs-hl-sharebar[hidden],
+.aifs-hl-editor-quote[hidden],
+.aifs-hl-editor-colors[hidden],
+.aifs-hl-btn[hidden],
 .aifs-hl-editor[hidden],
 .aifs-hl-panel[hidden],
 .aifs-hl-launch[hidden],
@@ -583,11 +717,59 @@ mark.aifs-hl.aifs-hl-flash {
   }
 }
 
+@media (forced-colors: active) {
+  mark.aifs-hl,
+  .aifs-hl-atom {
+    forced-color-adjust: none;
+    background: Mark;
+    color: MarkText;
+    outline: 1px solid CanvasText;
+  }
+
+  mark.aifs-hl.aifs-hl-shared,
+  mark.aifs-hl.aifs-hl-approx {
+    background: Canvas;
+    color: CanvasText;
+    border-bottom-color: Highlight;
+  }
+
+  .aifs-hl-swatch-btn {
+    forced-color-adjust: none;
+  }
+
+  mark.aifs-hl:focus-visible,
+  .aifs-hl-atom:focus-visible {
+    outline: 3px solid Highlight;
+  }
+}
+
 @media print {
   .aifs-hl-launch,
   .aifs-hl-toolbar,
   .aifs-hl-editor,
-  .aifs-hl-panel {
+  .aifs-hl-panel,
+  .aifs-hl-toast,
+  .aifs-hl-sharebar {
     display: none !important;
+  }
+
+  mark.aifs-hl,
+  .aifs-hl-atom {
+    background: none !important;
+    color: inherit !important;
+    outline: none !important;
+    border-bottom: 1px solid #9a9a9a !important;
+    box-shadow: none !important;
+  }
+
+  mark.aifs-hl.aifs-hl-shared,
+  mark.aifs-hl.aifs-hl-approx,
+  .aifs-hl-atom.aifs-hl-shared,
+  .aifs-hl-atom.aifs-hl-approx {
+    border-bottom: 0 !important;
+  }
+
+  mark.aifs-hl.aifs-hl-noted.aifs-hl-end::after {
+    display: none;
   }
 }

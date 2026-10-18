@@ -16,6 +16,9 @@
   var MIN_TOKEN_OVERLAP = 0.5;
   var LONG_MIN_RATIO = 0.7;
   var LONG_MAX_RATIO = 1.4;
+  var SHORT_CONTEXT_MIN = 0.5;
+  var FUZZY_CONTEXT_MIN = 0.3;
+  var CJK = /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af\uf900-\ufaff\uff66-\uff9f]/;
 
   var BLOCK_TAGS = {
     ADDRESS: 1, ARTICLE: 1, ASIDE: 1, BLOCKQUOTE: 1, BR: 1, DD: 1, DETAILS: 1, DIV: 1, DL: 1, DT: 1,
@@ -24,14 +27,19 @@
     TH: 1, THEAD: 1, TR: 1, UL: 1
   };
   var SKIP_TAGS = {
-    BUTTON: 1, CANVAS: 1, INPUT: 1, NAV: 1, NOSCRIPT: 1, SCRIPT: 1, SELECT: 1, STYLE: 1, SVG: 1,
-    svg: 1, TEMPLATE: 1, TEXTAREA: 1
+    CANVAS: 1, INPUT: 1, NAV: 1, NOSCRIPT: 1, SCRIPT: 1, SELECT: 1, STYLE: 1, TEMPLATE: 1, TEXTAREA: 1,
+    IFRAME: 1, VIDEO: 1, AUDIO: 1, OBJECT: 1, EMBED: 1
   };
   var SKIP_CLASSES = [
-    'ai-panels', 'aifs-hl-ui', 'code-copy', 'code-lang', 'lesson-action-panel', 'lesson-figure',
-    'lesson-nav-bottom', 'lesson-section-guide', 'mermaid-container', 'quiz-section'
+    'ai-panels', 'aifs-hl-ui', 'code-copy', 'code-lang', 'lesson-nav-bottom', 'lesson-section-guide',
+    'lesson-action-run', 'lesson-action-tags', 'lesson-action-status', 'quiz-marker', 'quiz-reset-status',
+    'mermaid-toolbar', 'mermaid-source', 'm-dither', 'tts-from-here'
   ];
+  var TEXT_BUTTON_CLASSES = ['quiz-option', 'lesson-action-step'];
   var ATOMIC_CLASSES = ['math-inline', 'math-display'];
+  var UNIT_CLASSES = ['lesson-figure', 'mermaid-container', 'm-fig-art'];
+  var CAPTION_CLASSES = ['lf-cap', 'lf-head', 'asf-caption'];
+  var BLOCK_CLASSES = ['m-fig-num', 'm-fig-title', 'm-fig-kind', 'm-listing-title', 'm-listing-src', 'm-section-num', 'm-kicker', 'quiz-option-text', 'lesson-action-step-title', 'lesson-action-step-copy', 'lesson-action-step-num'];
   var WHITESPACE = /[\s\u00a0\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]/;
   var INVISIBLE = /[\u00ad\u200b-\u200d\u2060\ufeff]/;
 
@@ -100,14 +108,51 @@
     return { start: normalized.map[start], end: normalized.map[end - 1] + 1 };
   }
 
+  function isLowSurrogate(code) {
+    return code >= 0xdc00 && code <= 0xdfff;
+  }
+
+  function isHighSurrogate(code) {
+    return code >= 0xd800 && code <= 0xdbff;
+  }
+
+  function safeStart(text, index) {
+    if (index > 0 && index < text.length && isLowSurrogate(text.charCodeAt(index))) return index - 1;
+    return index;
+  }
+
+  function safeEnd(text, index) {
+    if (index > 0 && index < text.length && isHighSurrogate(text.charCodeAt(index - 1))) return index + 1;
+    return index;
+  }
+
   function describe(text, start, end) {
+    start = safeStart(text, start);
+    end = safeEnd(text, end);
+    var prefixStart = Math.max(0, start - CONTEXT_LENGTH);
+    if (prefixStart > 0 && isLowSurrogate(text.charCodeAt(prefixStart))) prefixStart++;
+    var suffixEnd = Math.min(text.length, end + CONTEXT_LENGTH);
+    if (suffixEnd < text.length && isHighSurrogate(text.charCodeAt(suffixEnd - 1))) suffixEnd--;
     return {
       quote: {
         exact: text.slice(start, end),
-        prefix: text.slice(Math.max(0, start - CONTEXT_LENGTH), start),
-        suffix: text.slice(end, end + CONTEXT_LENGTH)
+        prefix: text.slice(prefixStart, start),
+        suffix: text.slice(end, suffixEnd)
       },
       position: { start: start, end: end, length: text.length }
+    };
+  }
+
+  function describeSection(model, start, end) {
+    var section = sectionAt(model, start);
+    if (!section) return { section: '', sectionTitle: '', sectionIndex: -1, sectionOffset: null, sectionSpan: null };
+    var span = Math.max(1, section.end - section.start);
+    return {
+      section: section.id,
+      sectionTitle: section.title,
+      sectionIndex: section.index,
+      sectionOffset: Math.max(0, Math.min(1, (start - section.start) / span)),
+      sectionSpan: Math.max(0, Math.min(1, (end - start) / span))
     };
   }
 
@@ -188,7 +233,11 @@
     for (var j = 0; j < scored.length; j++) topScore = Math.max(topScore, scored[j].score);
     var top = scored.filter(function (candidate) { return candidate.score >= topScore - CONTEXT_TOLERANCE; });
     var chosen = pickNearest(top, target);
-    return { start: chosen.start, end: chosen.end, method: 'quote', score: 1 };
+    if (exact.length < FUZZY_MIN_LENGTH) {
+      var near = target >= 0 && Math.abs(chosen.start - target) <= Math.max(200, text.length * 0.02);
+      if (chosen.score < SHORT_CONTEXT_MIN && !near) return null;
+    }
+    return { start: chosen.start, end: chosen.end, method: 'quote', score: Math.min(1, 0.7 + chosen.score * 0.15) };
   }
 
   function bestEnd(text, from, to, pattern, maxErrors, target) {
@@ -252,10 +301,29 @@
     var counts = {};
     var total = 0;
     var list = String(value).toLowerCase().split(/[^a-z0-9\u00c0-\uffff]+/);
-    for (var i = 0; i < list.length; i++) {
-      if (!list[i]) continue;
-      counts[list[i]] = (counts[list[i]] || 0) + 1;
+    function count(token) {
+      counts[token] = (counts[token] || 0) + 1;
       total++;
+    }
+    for (var i = 0; i < list.length; i++) {
+      var token = list[i];
+      if (!token) continue;
+      if (!CJK.test(token)) {
+        count(token);
+        continue;
+      }
+      var plain = '';
+      for (var j = 0; j < token.length; j++) {
+        var ch = token.charAt(j);
+        if (CJK.test(ch)) {
+          if (plain) count(plain);
+          plain = '';
+          count(ch);
+        } else {
+          plain += ch;
+        }
+      }
+      if (plain) count(plain);
     }
     return { counts: counts, total: total };
   }
@@ -304,24 +372,64 @@
     return fuzzyLong(text, Math.max(0, from), Math.min(text.length, to), exact, target);
   }
 
+  function contextAgreement(text, span, quote) {
+    var prefix = quote.prefix || '';
+    var suffix = quote.suffix || '';
+    var scores = [];
+    if (prefix.trim()) scores.push(tokenOverlap(prefix, text.slice(Math.max(0, span.start - prefix.length - 8), span.start)));
+    if (suffix.trim()) scores.push(tokenOverlap(suffix, text.slice(span.end, span.end + suffix.length + 8)));
+    if (!scores.length) return 1;
+    return scores.reduce(function (a, b) { return a + b; }, 0) / scores.length;
+  }
+
   function locateFuzzy(text, quote, target, regions) {
     var exact = quote.exact;
     if (exact.length < FUZZY_MIN_LENGTH) return null;
     var slack = Math.max(2000, exact.length * 4);
+    var section = null;
     var tries = [];
     for (var i = 0; i < regions.length; i++) {
-      if (regions[i] && regions[i].end > regions[i].start) tries.push(regions[i]);
+      if (regions[i] && regions[i].end > regions[i].start) {
+        tries.push(regions[i]);
+        if (!section) section = regions[i];
+      }
     }
     if (target >= 0) tries.push({ start: target - slack, end: target + exact.length + slack });
     if (exact.length >= WHOLE_TEXT_FUZZY_MIN) tries.push({ start: 0, end: text.length });
     for (var j = 0; j < tries.length; j++) {
       var span = fuzzyInRegion(text, exact, tries[j].start - exact.length, tries[j].end + exact.length, target);
-      if (span && span.score >= FUZZY_THRESHOLD) {
-        trimSpan(text, span);
-        if (span.end > span.start) return { start: span.start, end: span.end, method: 'fuzzy', score: span.score };
-      }
+      if (!span || span.score < FUZZY_THRESHOLD) continue;
+      trimSpan(text, span);
+      if (span.end <= span.start) continue;
+      var context = contextAgreement(text, span, quote);
+      var inSection = !!(section && span.start >= section.start && span.end <= section.end + exact.length);
+      if (context < FUZZY_CONTEXT_MIN && !inSection) continue;
+      var overlap = tokenOverlap(exact, text.slice(span.start, span.end));
+      var confidence = Math.min(1, 0.5 * span.score + 0.3 * overlap + 0.2 * context);
+      return { start: span.start, end: span.end, method: 'fuzzy', score: span.score, context: context, inSection: inSection, confidence: Math.round(confidence * 100) / 100 };
     }
     return null;
+  }
+
+  function approximate(model, item) {
+    var section = sectionById(model, item.section);
+    if (!section && item.sectionIndex >= 0 && item.sectionIndex < model.sections.length) section = model.sections[item.sectionIndex];
+    if (!section || item.sectionOffset === null || item.sectionOffset === undefined) return null;
+    var text = model.text;
+    var span = Math.max(1, section.end - section.start);
+    var start = section.start + Math.round(span * item.sectionOffset);
+    var length = Math.max(1, Math.round(span * (item.sectionSpan || 0.05)));
+    var end = Math.min(section.end, start + length);
+    var limit = 40;
+    var back = 0;
+    while (start > section.start && back < limit && !/[\s\u3002\uff0c\uff1b\u3001.,;:!?\uff01\uff1f]/.test(text.charAt(start - 1))) { start--; back++; }
+    var forward = 0;
+    while (end < section.end && forward < limit && !/[\s\u3002\uff0c\uff1b\u3001.,;:!?\uff01\uff1f]/.test(text.charAt(end))) { end++; forward++; }
+    start = safeStart(text, start);
+    end = safeEnd(text, end);
+    var trimmed = trimSpan(text, { start: start, end: end });
+    if (trimmed.end <= trimmed.start) return null;
+    return { start: trimmed.start, end: trimmed.end, method: 'approx', score: 0, confidence: 0 };
   }
 
   function locate(text, selector, options) {
@@ -330,7 +438,10 @@
     if (!quote || typeof quote.exact !== 'string' || !quote.exact) return null;
     var target = expectedStart(text, selector.position);
     var exact = locateExact(text, quote, target);
-    if (exact) return exact;
+    if (exact) {
+      exact.confidence = exact.method === 'context' ? 1 : Math.round(exact.score * 100) / 100;
+      return exact;
+    }
     return locateFuzzy(text, quote, target, options.regions || []);
   }
 
@@ -338,15 +449,31 @@
     return node && node.nodeType === 1;
   }
 
+  function attr(el, name) {
+    return el.getAttribute ? el.getAttribute(name) : null;
+  }
+
+  function tagOf(el) {
+    return String(el.tagName || '').toUpperCase();
+  }
+
   function isSkipped(el) {
-    if (SKIP_TAGS[el.tagName]) return true;
+    var tag = tagOf(el);
+    if (SKIP_TAGS[tag]) return true;
     if (hasAnyClass(el, SKIP_CLASSES)) return true;
-    if (el.tagName === 'SUMMARY' && el.parentNode && hasAnyClass(el.parentNode, ['lesson-hints'])) return true;
+    if (tag === 'BUTTON' && !hasAnyClass(el, TEXT_BUTTON_CLASSES)) return true;
+    if (attr(el, 'aria-hidden') === 'true') return true;
+    if (attr(el, 'role') === 'status' || attr(el, 'aria-live')) return true;
+    if (tag === 'SUMMARY' && el.parentNode && hasAnyClass(el.parentNode, ['lesson-hints'])) return true;
     return false;
   }
 
   function isAtomic(el) {
     return hasAnyClass(el, ATOMIC_CLASSES);
+  }
+
+  function isUnit(el) {
+    return hasAnyClass(el, UNIT_CLASSES);
   }
 
   function atomicText(el) {
@@ -355,26 +482,90 @@
     return ' ' + String(tex || '').trim() + ' ';
   }
 
+  function shortHash(value) {
+    var hash = 2166136261;
+    for (var i = 0; i < value.length; i++) {
+      hash ^= value.charCodeAt(i);
+      hash = Math.imul(hash, 16777619);
+    }
+    return (hash >>> 0).toString(36);
+  }
+
+  function unitText(el) {
+    if (hasAnyClass(el, ['lesson-figure'])) return ' [figure ' + (attr(el, 'data-figure') || 'unnamed') + '] ';
+    if (hasAnyClass(el, ['mermaid-container'])) {
+      var source = el.querySelector ? el.querySelector('.mermaid-source') : null;
+      return ' [diagram ' + shortHash(normalizeQuote(source ? source.textContent : '')) + '] ';
+    }
+    var figure = el.parentNode && el.parentNode.parentNode;
+    var id = figure && attr(figure, 'id');
+    return ' [figure ' + (id || 'unnamed') + '] ';
+  }
+
+  function sectionTitle(el) {
+    var tag = tagOf(el);
+    if (tag !== 'SECTION') return normalizeQuote(el.textContent).slice(0, 120);
+    var heading = el.querySelector ? el.querySelector('h1, h2, h3') : null;
+    return normalizeQuote(heading ? heading.textContent : '').slice(0, 120);
+  }
+
+  function isSectionStart(el) {
+    var tag = tagOf(el);
+    return !!el.id && (tag === 'H1' || tag === 'H2' || tag === 'H3' || tag === 'SECTION');
+  }
+
   function buildModel(rootNode) {
     var segments = [];
     var sections = [];
     var parts = [];
     var length = 0;
 
-    function push(node, text, atomic) {
+    function push(node, text, kind) {
       if (!text) return;
-      segments.push({ node: node, start: length, end: length + text.length, atomic: !!atomic });
+      segments.push({ node: node, start: length, end: length + text.length, atomic: !!kind, unit: kind === 'unit' });
       parts.push(text);
       length += text.length;
     }
 
     function boundary() {
-      if (parts.length && parts[parts.length - 1] !== ' ') push(null, ' ', false);
+      if (parts.length && parts[parts.length - 1] !== ' ') push(null, ' ', '');
+    }
+
+    function walkChildren(node, walker) {
+      var children = node.childNodes || [];
+      for (var i = 0; i < children.length; i++) walker(children[i]);
+    }
+
+    function walkSvg(node) {
+      if (!isElement(node)) return;
+      if (tagOf(node) === 'FOREIGNOBJECT') {
+        boundary();
+        walkChildren(node, walk);
+        boundary();
+        return;
+      }
+      walkChildren(node, walkSvg);
+    }
+
+    function walkCaptions(node) {
+      if (!isElement(node)) return;
+      if (isSkipped(node)) return;
+      if (tagOf(node) === 'FIGCAPTION' || hasAnyClass(node, CAPTION_CLASSES)) {
+        boundary();
+        walkChildren(node, walk);
+        boundary();
+        return;
+      }
+      if (tagOf(node) === 'SVG') {
+        walkSvg(node);
+        return;
+      }
+      walkChildren(node, walkCaptions);
     }
 
     function walk(node) {
       if (node.nodeType === 3) {
-        push(node, node.nodeValue, false);
+        push(node, node.nodeValue, '');
         return;
       }
       if (!isElement(node)) return;
@@ -383,26 +574,38 @@
         return;
       }
       if (isAtomic(node)) {
-        push(node, atomicText(node), true);
+        push(node, atomicText(node), 'atom');
         return;
       }
-      var block = !!BLOCK_TAGS[node.tagName];
-      if (block) boundary();
-      if ((node.tagName === 'H2' || node.tagName === 'H3') && node.id) {
-        sections.push({ id: node.id, rawStart: length, title: normalizeQuote(node.textContent).slice(0, 120) });
+      if (isUnit(node)) {
+        boundary();
+        push(node, unitText(node), 'unit');
+        walkChildren(node, walkCaptions);
+        boundary();
+        return;
       }
-      var children = node.childNodes || [];
-      for (var i = 0; i < children.length; i++) walk(children[i]);
+      if (tagOf(node) === 'SVG') {
+        boundary();
+        walkSvg(node);
+        boundary();
+        return;
+      }
+      var block = !!BLOCK_TAGS[tagOf(node)] || hasAnyClass(node, BLOCK_CLASSES);
+      if (block) boundary();
+      if (isSectionStart(node)) {
+        sections.push({ id: node.id, rawStart: length, title: sectionTitle(node) });
+      }
+      walkChildren(node, walk);
       if (block) boundary();
     }
 
-    var children = rootNode.childNodes || [];
-    for (var c = 0; c < children.length; c++) walk(children[c]);
+    walkChildren(rootNode, walk);
 
     var raw = parts.join('');
     var normalized = normalize(raw);
     for (var s = 0; s < sections.length; s++) {
       sections[s].start = lowerBound(normalized.map, sections[s].rawStart);
+      sections[s].index = s;
     }
     for (var t = 0; t < sections.length; t++) {
       sections[t].end = t + 1 < sections.length ? sections[t + 1].start : normalized.text.length;
@@ -446,7 +649,7 @@
   function isPhrasingParent(node) {
     var parent = node.parentNode;
     if (!parent || !parent.tagName) return false;
-    return !/^(UL|OL|TABLE|TBODY|THEAD|TFOOT|TR|DL|SELECT)$/.test(parent.tagName);
+    return !/^(UL|OL|TABLE|TBODY|THEAD|TFOOT|TR|DL|SELECT|SVG|G|TEXT|TSPAN)$/.test(tagOf(parent));
   }
 
   function wrap(model, start, end, createMark) {
@@ -492,7 +695,10 @@
     rawToNormalized: rawToNormalized,
     normalizedToRaw: normalizedToRaw,
     describe: describe,
+    describeSection: describeSection,
     locate: locate,
+    approximate: approximate,
+    tokenOverlap: tokenOverlap,
     buildModel: buildModel,
     sectionAt: sectionAt,
     sectionById: sectionById,

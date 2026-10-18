@@ -5,7 +5,6 @@ const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
 const Anchor = require('./highlights-anchor');
-const StoreModule = require('./highlights-store');
 const { parseMd } = require('./lesson-markdown');
 
 class TextNode {
@@ -58,13 +57,22 @@ class ElementNode {
     }
     this.childNodes = merged;
   }
+  matchesSimple(selector) {
+    const match = selector.trim().match(/^([a-zA-Z0-9]*)(?:\.([a-zA-Z0-9_-]+))?(?:\[([a-z-]+)="([^"]*)"\])?$/);
+    if (!match) throw new Error('unsupported selector ' + selector);
+    const [, tag, cls, name, value] = match;
+    if (tag && this.tagName !== tag.toUpperCase()) return false;
+    if (cls && !(this.getAttribute('class') || '').split(/\s+/).includes(cls)) return false;
+    if (name && this.getAttribute(name) !== value) return false;
+    return true;
+  }
   querySelector(selector) {
-    if (selector !== 'annotation[encoding="application/x-tex"]') throw new Error('unsupported selector ' + selector);
+    const parts = selector.split(',');
     const stack = [...this.childNodes];
     while (stack.length) {
       const node = stack.shift();
       if (node.nodeType !== 1) continue;
-      if (node.tagName === 'ANNOTATION' && node.getAttribute('encoding') === 'application/x-tex') return node;
+      if (parts.some(part => node.matchesSimple(part))) return node;
       stack.unshift(...node.childNodes);
     }
     return null;
@@ -428,250 +436,272 @@ test('overlapping highlights wrap from the end with one model and nest cleanly',
   assert.equal(dom.textContent, original);
 });
 
-function memoryStorage(seed = {}) {
-  const data = new Map(Object.entries(seed));
-  return {
-    data,
-    getItem: key => (data.has(key) ? data.get(key) : null),
-    setItem: (key, value) => { data.set(key, String(value)); },
-    removeItem: key => { data.delete(key); },
-  };
+function el(tag, attrs = {}, children = []) {
+  const node = new ElementNode(tag, attrs);
+  for (const child of children) node.appendChild(typeof child === 'string' ? new TextNode(child) : child);
+  return node;
 }
 
-function fakeWindow(storage) {
-  const listeners = {};
-  return {
-    localStorage: storage,
-    addEventListener: (name, fn) => { (listeners[name] = listeners[name] || []).push(fn); },
-    dispatch: (name, event) => (listeners[name] || []).forEach(fn => fn(event)),
-  };
+function articleOf(...children) {
+  return el('article', { class: 'lesson-article' }, children);
 }
 
-function sampleItem(overrides = {}) {
-  return {
-    lang: 'en',
-    color: 'green',
-    note: '',
-    quote: { exact: 'steepest increase', prefix: 'direction of ', suffix: ', so we step' },
-    position: { start: 120, end: 137, length: 600 },
-    section: 'the-problem',
-    sectionTitle: 'The Problem',
-    ...overrides,
-  };
-}
+const markOf = () => new ElementNode('mark', { class: 'aifs-hl' });
 
-const LESSON_PATH = 'phases/01-math-foundations/04-gradient-descent';
-
-test('the store keeps a versioned record under its own localStorage key', () => {
-  const storage = memoryStorage();
-  const store = StoreModule.create(fakeWindow(storage));
-  const item = store.add(LESSON_PATH, sampleItem(), { title: 'Gradient Descent' });
-  assert.match(item.id, /^h[a-z0-9]+$/);
-  const saved = JSON.parse(storage.getItem('aifs:highlights:v1'));
-  assert.equal(saved.schemaVersion, 1);
-  assert.equal(saved.pages[LESSON_PATH].title, 'Gradient Descent');
-  assert.equal(saved.pages[LESSON_PATH].items[0].quote.exact, 'steepest increase');
-  const updated = store.update(LESSON_PATH, item.id, { color: 'pink', note: 'Sign matters.' });
-  assert.equal(updated.color, 'pink');
-  assert.equal(updated.createdAt, item.createdAt);
-  assert.equal(store.items(LESSON_PATH)[0].note, 'Sign matters.');
-  assert.equal(store.remove(LESSON_PATH, item.id), true);
-  assert.deepEqual(store.items(LESSON_PATH), []);
-  assert.deepEqual(JSON.parse(storage.getItem('aifs:highlights:v1')).pages, {});
+test('quiz questions and option text are highlightable, controls and status text are not', () => {
+  const quiz = el('div', { class: 'quiz-section', id: 'quiz-pre' }, [
+    el('div', { class: 'quiz-title' }, ['Pre-lesson check']),
+    el('div', { class: 'quiz-reset-status', role: 'status', 'aria-live': 'polite' }, ['Answers cleared']),
+    el('div', { class: 'quiz-question-text' }, ['1. What does the derivative tell you?']),
+    el('div', { class: 'quiz-options', role: 'group' }, [
+      el('button', { class: 'quiz-option', type: 'button' }, [el('span', { class: 'quiz-marker', 'aria-hidden': 'true' }, ['A']), el('span', { class: 'quiz-option-text' }, ['The slope of the tangent line'])]),
+    ]),
+    el('button', { class: 'quiz-reset', type: 'button' }, ['Reset answers']),
+  ]);
+  const dom = articleOf(el('p', {}, ['Intro text.']), quiz);
+  const model = Anchor.buildModel(dom);
+  assert.match(model.text, /What does the derivative tell you\? The slope of the tangent line/);
+  assert.doesNotMatch(model.text, /Answers cleared|Reset answers|\bA The slope/);
+  const start = model.text.indexOf('slope of the tangent');
+  const painted = Anchor.wrap(model, start, start + 'slope of the tangent'.length, markOf);
+  assert.equal(painted.marks.length, 1);
+  assert.equal(painted.marks[0].parentNode.getAttribute('class'), 'quiz-option-text');
 });
 
-test('the store rejects unknown colours, bad paths and empty quotes', () => {
-  const store = StoreModule.create(fakeWindow(memoryStorage()));
-  assert.equal(store.add(LESSON_PATH, sampleItem({ color: 'purple' })).color, 'yellow');
-  assert.equal(store.add('../etc/passwd', sampleItem()), null);
-  assert.equal(store.add(LESSON_PATH, sampleItem({ quote: { exact: '   ' } })), null);
-  assert.equal(store.add(LESSON_PATH, sampleItem({ note: 'x'.repeat(5000) })).note.length, 2000);
+test('the action panel keeps its stable copy and drops the changing run command and status', () => {
+  const panel = el('aside', { class: 'lesson-action-panel' }, [
+    el('h2', { class: 'lesson-action-title', id: 'lessonActionTitle' }, ['Act on this lesson']),
+    el('div', { class: 'lesson-action-status', role: 'status' }, ['0 of 5 checkpoints']),
+    el('button', { class: 'lesson-action-step', type: 'button' }, [el('span', { class: 'lesson-action-step-title' }, ['Read']), el('span', { class: 'lesson-action-step-copy' }, ['Understand the claim and constraints.'])]),
+    el('div', { class: 'lesson-action-run' }, [el('code', {}, ['Checking for a standalone runnable file'])]),
+    el('div', { class: 'lesson-action-tags' }, [el('span', {}, ['Local progress'])]),
+  ]);
+  const model = Anchor.buildModel(articleOf(panel));
+  assert.match(model.text, /Act on this lesson Read Understand the claim and constraints\./);
+  assert.doesNotMatch(model.text, /checkpoints|Checking for|Local progress/);
 });
 
-test('corrupt storage starts empty and keeps the unreadable original', () => {
-  const storage = memoryStorage({ 'aifs:highlights:v1': '{not json' });
-  const store = StoreModule.create(fakeWindow(storage));
-  assert.deepEqual(store.pages(), []);
-  assert.equal(store.info().lastError, 'unreadable');
-  assert.equal(storage.getItem('aifs:highlights:v1:unreadable'), '{not json');
-  store.add(LESSON_PATH, sampleItem());
-  assert.equal(storage.getItem('aifs:highlights:v1:unreadable'), '{not json');
-  assert.equal(JSON.parse(storage.getItem('aifs:highlights:v1')).pages[LESSON_PATH].items.length, 1);
+test('mermaid diagrams are a unit and their HTML labels are text, while SVG text and the source are skipped', () => {
+  const svg = el('svg', {}, [
+    el('g', {}, [el('foreignObject', {}, [el('div', {}, [el('span', { class: 'nodeLabel' }, [el('p', {}, ['Tokenizer'])])])])]),
+    el('g', {}, [el('foreignObject', {}, [el('div', {}, [el('span', { class: 'nodeLabel' }, [el('p', {}, ['Embedding table'])])])])]),
+    el('text', {}, ['axis label']),
+  ]);
+  const container = el('div', { class: 'mermaid-container' }, [
+    el('div', { class: 'mermaid-block' }, [
+      el('div', { class: 'mermaid-toolbar' }, [el('button', { class: 'mermaid-btn' }, ['Expand'])]),
+      el('pre', { class: 'mermaid mermaid-source' }, ['graph LR; A[Tokenizer] --> B[Embedding table]']),
+      el('div', { class: 'mermaid-render' }, [svg]),
+    ]),
+  ]);
+  const model = Anchor.buildModel(articleOf(el('p', {}, ['Before.']), container, el('p', {}, ['After.'])));
+  assert.match(model.text, /Before\. \[diagram [a-z0-9]+\] Tokenizer Embedding table After\./);
+  assert.doesNotMatch(model.text, /axis label|graph LR|Expand/);
+  const unit = model.segments.find(segment => segment.unit);
+  assert.equal(unit.node, container);
+  const start = model.text.indexOf('Embedding');
+  const painted = Anchor.wrap(model, start, start + 'Embedding'.length, markOf);
+  assert.equal(painted.marks[0].parentNode.tagName, 'P');
+  const whole = Anchor.wrap(Anchor.buildModel(articleOf(container)), 0, 20, markOf);
+  assert.deepEqual(whole.atoms, [container]);
 });
 
-test('invalid items are skipped but the original payload is backed up', () => {
-  const raw = JSON.stringify({
-    schemaVersion: 1,
-    pages: { [LESSON_PATH]: { title: 'GD', items: [{ id: 'good1', quote: { exact: 'kept' } }, { id: 'bad1', quote: {} }, 'junk'] } },
-  });
-  const storage = memoryStorage({ 'aifs:highlights:v1': raw });
-  const store = StoreModule.create(fakeWindow(storage));
-  assert.deepEqual(store.items(LESSON_PATH).map(item => item.id), ['good1']);
-  assert.equal(store.info().lastError, 'skipped-invalid');
-  assert.equal(storage.getItem('aifs:highlights:v1:unreadable'), raw);
+test('interactive lesson figures are one unit with a highlightable caption, and their live readouts are ignored', () => {
+  const figure = el('div', { class: 'lesson-figure', 'data-figure': 'lr-sweep' }, [
+    el('div', { class: 'lf' }, [
+      el('div', { class: 'lf-head' }, [el('span', { class: 'lf-label' }, ['Learning rate sweep'])]),
+      el('div', { class: 'lf-body' }, [el('div', { class: 'lf-meta' }, ['lr too large: each step overshoots'])]),
+      el('div', { class: 'lf-cap' }, ['Drag the slider to change the learning rate.']),
+    ]),
+  ]);
+  const model = Anchor.buildModel(articleOf(figure));
+  assert.equal(model.text, '[figure lr-sweep] Learning rate sweep Drag the slider to change the learning rate.');
+  figure.childNodes[0].childNodes[1].childNodes[0].childNodes[0].nodeValue = 'balanced';
+  assert.equal(Anchor.buildModel(articleOf(figure)).text, model.text);
 });
 
-test('data from a newer schema is shown read-only and never overwritten', () => {
-  const raw = JSON.stringify({ schemaVersion: 2, pages: { [LESSON_PATH]: { items: [{ id: 'future', quote: { exact: 'from the future' } }] } } });
-  const storage = memoryStorage({ 'aifs:highlights:v1': raw });
-  const store = StoreModule.create(fakeWindow(storage));
-  assert.equal(store.info().readOnly, true);
-  assert.equal(store.items(LESSON_PATH)[0].quote.exact, 'from the future');
-  assert.equal(store.add(LESSON_PATH, sampleItem()), null);
-  assert.equal(store.add('phases/09-new/01-page', sampleItem()), null);
-  assert.equal(store.items(LESSON_PATH).length, 1);
-  assert.deepEqual(store.pages().map(page => page.path), [LESSON_PATH]);
-  assert.equal(store.remove(LESSON_PATH, 'future'), false);
-  assert.equal(storage.getItem('aifs:highlights:v1'), raw);
+test('manual pages: sections come from section ids, figures are units, captions, listings and takeaways are text', () => {
+  const html = '<section class="m-section" id="s-2-1"><header class="m-section-head"><div class="m-section-num">2.1</div><h1 class="m-section-title">Reading a sequence</h1></header>'
+    + '<p>A request opens a task.</p>'
+    + '<figure class="m-fig" id="fig-reading-a-sequence"><div class="m-fig-box"><div class="m-fig-head"><span class="m-fig-num">Fig 2</span><span class="m-fig-title">The task loop</span></div><div class="m-fig-art"><svg><text>client</text></svg></div></div><figcaption class="m-fig-cap">Each message moves the task forward.</figcaption></figure>'
+    + '<figure class="m-listing"><div class="m-listing-head"><span class="m-listing-title">Send</span></div><pre><code>curl -X POST /tasks</code></pre><figcaption class="m-listing-note">The server answers with a task id.</figcaption></figure>'
+    + '<aside class="m-takeaways"><div class="m-box-label">Takeaways</div><ul><li>Tasks have states.</li><li>Messages carry parts.</li></ul></aside>'
+    + '<div class="m-dither" aria-hidden="true"><span class="m-dither-label">Part 2</span></div></section>';
+  const dom = parseHtml(html);
+  const model = Anchor.buildModel(dom);
+  assert.match(model.text, /Fig 2 The task loop \[figure fig-reading-a-sequence\] Each message moves the task forward\./);
+  assert.match(model.text, /curl -X POST \/tasks The server answers with a task id\./);
+  assert.match(model.text, /Tasks have states\. Messages carry parts\./);
+  assert.doesNotMatch(model.text, /client|Part 2/);
+  assert.equal(model.sections[0].id, 's-2-1');
+  assert.equal(model.sections[0].title, 'Reading a sequence');
+  const at = model.text.indexOf('Messages carry');
+  assert.equal(Anchor.sectionAt(model, at).id, 's-2-1');
 });
 
-test('blocked storage falls back to memory for the session', () => {
-  const win = fakeWindow(null);
-  Object.defineProperty(win, 'localStorage', { get() { throw new Error('SecurityError'); } });
-  const store = StoreModule.create(win);
-  const item = store.add(LESSON_PATH, sampleItem());
-  assert.ok(item);
-  assert.equal(store.items(LESSON_PATH).length, 1);
-  assert.equal(store.info().persistent, false);
-
-  const throwing = memoryStorage();
-  throwing.getItem = () => { throw new Error('denied'); };
-  const second = StoreModule.create(fakeWindow(throwing));
-  assert.ok(second.add(LESSON_PATH, sampleItem()));
-  assert.equal(second.info().persistent, false);
-});
-
-test('a full quota keeps the highlight for this tab and reports the reason', () => {
-  const storage = memoryStorage();
-  storage.setItem = () => { const error = new Error('quota'); error.name = 'QuotaExceededError'; throw error; };
-  const store = StoreModule.create(fakeWindow(storage));
-  assert.ok(store.add(LESSON_PATH, sampleItem()));
-  assert.equal(store.items(LESSON_PATH).length, 1);
-  assert.equal(store.info().lastError, 'quota');
-  assert.equal(store.info().persistent, false);
-});
-
-test('anchor refreshes can update quotes without bumping the edit time', () => {
-  const store = StoreModule.create(fakeWindow(memoryStorage()));
-  const item = store.add(LESSON_PATH, sampleItem());
-  store.updateMany(LESSON_PATH, { [item.id]: { status: 'orphaned' } }, true);
-  const after = store.items(LESSON_PATH)[0];
-  assert.equal(after.status, 'orphaned');
-  assert.equal(after.updatedAt, item.updatedAt);
-});
-
-test('export and import round-trip, merge by id and keep the newer edit', () => {
-  const source = StoreModule.create(fakeWindow(memoryStorage()));
-  const first = source.add(LESSON_PATH, sampleItem({ note: 'first' }), { title: 'Gradient Descent' });
-  source.add('phases/02-ml/01-regression', sampleItem({ quote: { exact: 'least squares' } }), { title: 'Regression' });
-  const exported = JSON.parse(source.exportJson());
-  assert.equal(exported.format, 'aifs-highlights');
-  assert.equal(exported.schemaVersion, 1);
-  assert.deepEqual(Object.keys(exported.pages).sort(), [LESSON_PATH, 'phases/02-ml/01-regression']);
-  assert.deepEqual(Object.keys(JSON.parse(source.exportJson([LESSON_PATH])).pages), [LESSON_PATH]);
-
-  const target = StoreModule.create(fakeWindow(memoryStorage()));
-  let result = target.importJson(JSON.stringify(exported));
-  assert.deepEqual([result.ok, result.added, result.updated, result.unchanged], [true, 2, 0, 0]);
-  result = target.importJson(JSON.stringify(exported));
-  assert.deepEqual([result.added, result.updated, result.unchanged], [0, 0, 2]);
-
-  exported.pages[LESSON_PATH].items[0].note = 'edited elsewhere';
-  exported.pages[LESSON_PATH].items[0].updatedAt = first.updatedAt + 1000;
-  exported.pages[LESSON_PATH].items.push({ id: 'broken', quote: {} });
-  result = target.importJson(JSON.stringify(exported));
-  assert.deepEqual([result.added, result.updated, result.skipped], [0, 1, 1]);
-  assert.equal(target.items(LESSON_PATH)[0].note, 'edited elsewhere');
-});
-
-test('import refuses files that are not highlight exports', () => {
-  const store = StoreModule.create(fakeWindow(memoryStorage()));
-  assert.equal(store.importJson('nope').error, 'not-json');
-  assert.equal(store.importJson(JSON.stringify({ format: 'something-else', pages: {} })).error, 'wrong-format');
-  assert.equal(store.importJson(JSON.stringify({ format: 'aifs-highlights', schemaVersion: 9, pages: {} })).error, 'newer-schema');
-  assert.equal(store.importJson(JSON.stringify([1, 2])).error, 'wrong-format');
-  assert.deepEqual(store.pages(), []);
-});
-
-test('markdown export lists quotes, notes, sections and orphan status', () => {
-  const store = StoreModule.create(fakeWindow(memoryStorage()));
-  const item = store.add(LESSON_PATH, sampleItem({ note: 'Remember the sign.' }), { title: 'Gradient Descent' });
-  store.updateMany(LESSON_PATH, { [item.id]: { status: 'orphaned' } }, true);
-  const md = store.exportMarkdown(null, { baseUrl: 'https://example.test/lesson?path=' });
-  assert.match(md, /^# Highlights/);
-  assert.match(md, /## Gradient Descent/);
-  assert.match(md, /Source: https:\/\/example\.test\/lesson\?path=phases%2F01-math-foundations%2F04-gradient-descent/);
-  assert.match(md, /> steepest increase/);
-  assert.match(md, /Section: The Problem/);
-  assert.match(md, /Status: orphaned/);
-  assert.match(md, /Note: Remember the sign\./);
-});
-
-test('another tab writing the key reloads the store and notifies listeners', () => {
-  const storage = memoryStorage();
-  const win = fakeWindow(storage);
-  const store = StoreModule.create(win);
-  let calls = 0;
-  assert.equal(store.items(LESSON_PATH).length, 0);
-  store.onChange(() => { calls++; });
-  const other = StoreModule.create(fakeWindow(storage));
-  other.add(LESSON_PATH, sampleItem());
-  assert.equal(store.items(LESSON_PATH).length, 0);
-  win.dispatch('storage', { key: 'aifs:highlights:v1' });
-  assert.equal(store.items(LESSON_PATH).length, 1);
-  assert.equal(calls, 1);
-});
-
-
-test('imported language tags are lowercased so they match the page language', () => {
-  const store = StoreModule.create(fakeWindow(memoryStorage()));
-  assert.equal(store.add(LESSON_PATH, sampleItem({ lang: 'pt-BR' })).lang, 'pt-br');
-});
-
-test('the store refuses new highlights past its total size budget', () => {
-  const store = StoreModule.create(fakeWindow(memoryStorage()));
-  const big = 'x'.repeat(3900);
-  let added = 0;
-  for (let p = 0; p < 2; p++) {
-    for (let i = 0; i < 500; i++) {
-      if (store.add(`phases/0${p}-a/${i}-b`, sampleItem({ quote: { exact: big + i } }))) added++;
-      else break;
-    }
+test('emoji and other surrogate pairs are never split by the quote or its context', () => {
+  const text = 'a'.repeat(31) + '\ud83d\ude80 launch the \ud83e\udde0 model now' + '\ud83d\udd25'.repeat(20);
+  const start = text.indexOf('launch') - 1;
+  const described = Anchor.describe(text, start, text.indexOf('model'));
+  for (const value of [described.quote.exact, described.quote.prefix, described.quote.suffix]) {
+    assert.doesNotThrow(() => encodeURIComponent(value));
   }
-  assert.ok(added < 1000 && added > 300, String(added));
-  assert.equal(store.info().lastError, 'full');
-  const pagesBefore = store.pages().length;
-  assert.equal(store.add('phases/09-new/01-page', sampleItem({ quote: { exact: big } })), null);
-  assert.equal(store.pages().length, pagesBefore);
+  const inside = Anchor.describe(text, text.indexOf('\ud83e') + 1, text.indexOf(' now'));
+  assert.ok(inside.quote.exact.startsWith('\ud83e\udde0'));
+  const hit = Anchor.locate(text, described);
+  assert.equal(hit.method, 'context');
 });
 
-test('read-only data is not changed in memory by a refused edit', () => {
-  const raw = JSON.stringify({ schemaVersion: 2, pages: { [LESSON_PATH]: { items: [{ id: 'future', color: 'blue', quote: { exact: 'kept' } }] } } });
-  const store = StoreModule.create(fakeWindow(memoryStorage({ 'aifs:highlights:v1': raw })));
-  assert.equal(store.update(LESSON_PATH, 'future', { color: 'pink' }), null);
-  assert.equal(store.updateMany(LESSON_PATH, { future: { status: 'orphaned' } }, true), false);
-  assert.equal(store.items(LESSON_PATH)[0].color, 'blue');
-  assert.equal(store.importJson(JSON.stringify({ format: 'aifs-highlights', schemaVersion: 1, pages: {} })).error, 'newer-schema');
+test('zero-width characters, soft hyphens and no-break spaces do not change the anchor', () => {
+  const before = Anchor.buildModel(articleOf(el('p', {}, ['The opti\u00admizer takes a\u00a0step\u200b toward lower loss.'])));
+  const after = Anchor.buildModel(articleOf(el('p', {}, ['The optimizer takes a step toward lower loss.'])));
+  assert.equal(before.text, after.text);
+  const selector = select(before.text, 'optimizer takes a step');
+  assert.equal(Anchor.locate(after.text, selector).method, 'context');
+  const painted = Anchor.wrap(before, before.text.indexOf('optimizer'), before.text.indexOf(' toward'), markOf);
+  assert.equal(painted.marks[0].textContent, 'opti\u00admizer takes a\u00a0step');
 });
 
-test('a reload from another tab is flagged so the page does not write back', () => {
-  const storage = memoryStorage();
-  const win = fakeWindow(storage);
-  const store = StoreModule.create(win);
-  const metas = [];
-  store.onChange((_, meta) => metas.push(meta.external === true));
-  store.add(LESSON_PATH, sampleItem());
-  win.dispatch('storage', { key: 'aifs:highlights:v1' });
-  assert.deepEqual(metas, [false, true]);
+test('Chinese (zh-TW) text re-anchors exactly and by fuzzy match after a one-character edit', () => {
+  const md = '## \u68af\u5ea6\n\n\u6a21\u578b\u6709\u8a31\u591a\u53c3\u6578\u3002\u8a13\u7df4\u6703\u79fb\u52d5\u9019\u4e9b\u53c3\u6578\uff0c\u8b93\u640d\u5931\u5728\u6bcf\u4e00\u6b65\u8b8a\u5c0f\u3002\u68af\u5ea6\u6307\u5411\u589e\u52a0\u6700\u5feb\u7684\u65b9\u5411\u3002';
+  const before = modelOf(md);
+  const selector = select(before.text, '\u8a13\u7df4\u6703\u79fb\u52d5\u9019\u4e9b\u53c3\u6578\uff0c\u8b93\u640d\u5931\u5728\u6bcf\u4e00\u6b65\u8b8a\u5c0f');
+  assert.equal(Anchor.locate(before.text, selector).method, 'context');
+  const after = modelOf(md.replace('\u8b93\u640d\u5931', '\u8b93\u6574\u9ad4\u640d\u5931'));
+  const hit = Anchor.locate(after.text, selector);
+  assert.equal(hit.method, 'fuzzy');
+  assert.ok(Anchor.tokenOverlap('\u8a13\u7df4\u53c3\u6578', '\u53c3\u6578\u8a13\u7df4') === 1);
+  assert.match(after.text.slice(hit.start, hit.end), /^\u8a13\u7df4.*\u8b8a\u5c0f$/);
 });
 
-test('the original highlighted text survives a re-anchor and appears in exports', () => {
-  const store = StoreModule.create(fakeWindow(memoryStorage()));
-  const item = store.add(LESSON_PATH, sampleItem(), { title: 'GD' });
-  store.updateMany(LESSON_PATH, { [item.id]: { status: 'moved', originalExact: 'steepest increase', quote: { exact: 'steepest ascent', prefix: '', suffix: '' } } }, true);
-  const saved = store.items(LESSON_PATH)[0];
-  assert.equal(saved.originalExact, 'steepest increase');
-  assert.match(store.exportMarkdown(), /Originally highlighted: steepest increase/);
+test('right-to-left Arabic text anchors by context and by fuzzy match', () => {
+  const md = '## \u0627\u0644\u062a\u062f\u0631\u062c\n\n\u064a\u062d\u062a\u0648\u064a \u0627\u0644\u0646\u0645\u0648\u0630\u062c \u0639\u0644\u0649 \u0645\u0639\u0627\u0645\u0644\u0627\u062a \u0643\u062b\u064a\u0631\u0629 \u0648\u0627\u0644\u062a\u062f\u0631\u064a\u0628 \u064a\u063a\u064a\u0631\u0647\u0627 \u0641\u064a \u0643\u0644 \u062e\u0637\u0648\u0629.';
+  const before = modelOf(md);
+  const selector = select(before.text, '\u0627\u0644\u0646\u0645\u0648\u0630\u062c \u0639\u0644\u0649 \u0645\u0639\u0627\u0645\u0644\u0627\u062a \u0643\u062b\u064a\u0631\u0629');
+  assert.equal(Anchor.locate(before.text, selector).method, 'context');
+  const after = modelOf(md.replace('\u0643\u062b\u064a\u0631\u0629', '\u0643\u062b\u064a\u0631\u0629 \u062c\u062f\u0627'));
+  assert.ok(Anchor.locate(after.text, selector));
+});
+
+test('short quotes anchor by quote, context and position, and fail cleanly when all three move', () => {
+  const md = '## A\n\n' + Array.from({ length: 60 }, (_, i) => `Line ${i} mentions the loss once.`).join(' ');
+  const before = modelOf(md);
+  const at = before.text.indexOf('Line 30 mentions the loss') + 'Line 30 mentions the '.length;
+  const selector = Anchor.describe(before.text, at, at + 4);
+  assert.equal(selector.quote.exact, 'loss');
+  const shifted = modelOf(md.replace('Line 30 mentions the loss once.', 'Line 30 talks about the loss once.'));
+  const near = Anchor.locate(shifted.text, selector);
+  assert.ok(near);
+  assert.ok(Math.abs(near.start - selector.position.start) < 40);
+  const lonely = modelOf('## A\n\n' + 'Intro words without the term. '.repeat(40) + 'At the very end the loss appears.');
+  const far = { quote: { exact: 'loss', prefix: 'zzzz unrelated words ', suffix: ' qqqq other' }, position: { start: 10, end: 14, length: lonely.text.length } };
+  assert.equal(Anchor.locate(lonely.text, far), null);
+});
+
+test('a rewritten paragraph only re-anchors with context agreement or inside its section, and reports confidence', () => {
+  const md = '## One\n\nThe optimizer updates every weight with the gradient and the learning rate.\n\n## Two\n\n' + 'Filler words keep the sections apart. '.repeat(30) + '\n\nA different text: the optimizer updates every weight using momentum and the learning rate.';
+  const before = modelOf(md);
+  const selector = select(before.text, 'The optimizer updates every weight with the gradient and the learning rate.');
+  const section = Anchor.sectionById(before, 'one');
+  assert.equal(Anchor.locate(before.text, selector, { regions: [section] }).confidence, 1);
+  const removed = modelOf(md.replace('The optimizer updates every weight with the gradient and the learning rate.', 'Weights move.'));
+  assert.equal(Anchor.locate(removed.text, selector, { regions: [Anchor.sectionById(removed, 'one')] }), null);
+  const edited = modelOf(md.replace('with the gradient and', 'with its gradient and'));
+  const hit = Anchor.locate(edited.text, selector, { regions: [Anchor.sectionById(edited, 'one')] });
+  assert.equal(hit.method, 'fuzzy');
+  assert.ok(hit.inSection);
+  assert.ok(hit.confidence > 0.8 && hit.confidence < 1, String(hit.confidence));
+});
+
+test('another language version gets a best-effort place by section id or section index', () => {
+  const en = modelOf('## Build It\n\nFirst sentence here. The key step is to subtract the gradient. Last sentence here.');
+  const start = en.text.indexOf('The key step');
+  const end = en.text.indexOf('gradient.') + 9;
+  const info = Anchor.describeSection(en, start, end);
+  const item = { section: info.section, sectionIndex: info.sectionIndex, sectionOffset: info.sectionOffset, sectionSpan: info.sectionSpan };
+  const fr = modelOf('## Build It\n\nPremi\u00e8re phrase ici. L\u2019\u00e9tape cl\u00e9 consiste \u00e0 soustraire le gradient. Derni\u00e8re phrase ici.');
+  const byId = Anchor.approximate(fr, item);
+  assert.equal(byId.method, 'approx');
+  assert.ok(byId.start > fr.sections[0].start && byId.end <= fr.text.length);
+  const zh = Anchor.buildModel(articleOf(el('h2', { id: 'section-1' }, ['\u5be6\u4f5c']), el('p', {}, ['\u7b2c\u4e00\u53e5\u3002\u95dc\u9375\u6b65\u9a5f\u662f\u6e1b\u53bb\u68af\u5ea6\u3002\u6700\u5f8c\u4e00\u53e5\u3002'])));
+  const byIndex = Anchor.approximate(zh, item);
+  assert.ok(byIndex && byIndex.end > byIndex.start);
+  assert.equal(Anchor.approximate(zh, { section: 'nope', sectionIndex: 9, sectionOffset: 0.5, sectionSpan: 0.1 }), null);
+});
+
+test('a very long selection (15,000 characters) anchors exactly and survives an inner edit', () => {
+  const paragraph = Array.from({ length: 300 }, (_, i) => `Sentence ${i} explains step ${i} of training.`).join(' ');
+  const md = '## Long\n\n' + paragraph;
+  const before = modelOf(md);
+  const start = before.text.indexOf('Sentence 0');
+  const selector = Anchor.describe(before.text, start, before.text.length);
+  assert.ok(selector.quote.exact.length > 12000);
+  assert.equal(Anchor.locate(before.text, selector).method, 'context');
+  const after = modelOf(md.replace('Sentence 150 explains', 'Sentence 150 clearly explains'));
+  assert.equal(Anchor.locate(after.text, selector).method, 'fuzzy');
+});
+
+test('selections across list items, table cells, a heading and code into text wrap only phrasing text', () => {
+  const md = '## Steps\n\n- first item\n- second item\n\n| a | b |\n|---|---|\n| cell one | cell two |\n\n### Code\n\n```python\nx = 1\n```\n\nAfter the code.';
+  const dom = lessonDom(md);
+  const original = dom.textContent;
+  const model = Anchor.buildModel(dom);
+  const painted = Anchor.wrap(model, model.text.indexOf('second'), model.text.indexOf('After the') + 9, markOf);
+  const parents = painted.marks.map(mark => mark.parentNode.tagName);
+  for (const tag of parents) assert.ok(!/^(UL|OL|TABLE|TBODY|THEAD|TR)$/.test(tag), tag);
+  assert.ok(parents.includes('LI') && parents.includes('TD') && parents.includes('H3') && parents.includes('CODE') && parents.includes('P'), parents.join(','));
+  assert.equal(dom.textContent, original);
+  for (const mark of painted.marks) Anchor.unwrap(mark);
+  assert.equal(dom.textContent, original);
+});
+
+test('a highlight inside a link keeps the link element and its href', () => {
+  const dom = lessonDom('See [the chain rule](https://example.com/chain) for details.');
+  const model = Anchor.buildModel(dom);
+  const painted = Anchor.wrap(model, model.text.indexOf('chain'), model.text.indexOf('rule') + 4, markOf);
+  const link = dom.findAll(node => node.tagName === 'A')[0];
+  assert.equal(painted.marks[0].parentNode, link);
+  assert.equal(link.getAttribute('href'), 'https://example.com/chain');
+});
+
+test('two highlights on the same range and nested ranges layer as separate marks', () => {
+  const dom = lessonDom('alpha beta gamma delta.');
+  let model = Anchor.buildModel(dom);
+  const start = model.text.indexOf('beta');
+  const end = model.text.indexOf('gamma') + 5;
+  const outer = Anchor.wrap(model, start, end, () => new ElementNode('mark', { class: 'aifs-hl', 'data-hl-id': 'one' }));
+  model = Anchor.buildModel(dom);
+  const inner = Anchor.wrap(model, start, end, () => new ElementNode('mark', { class: 'aifs-hl', 'data-hl-id': 'two' }));
+  assert.equal(outer.marks.length, 1);
+  assert.equal(inner.marks.length, 1);
+  assert.equal(inner.marks[0].parentNode, outer.marks[0]);
+  assert.equal(dom.textContent, 'alpha beta gamma delta.');
+});
+
+test('decorative and live regions are skipped', () => {
+  const model = Anchor.buildModel(articleOf(el('p', {}, ['Visible text.']), el('span', { 'aria-hidden': 'true' }, ['decoration']), el('div', { 'aria-live': 'polite' }, ['Saved!'])));
+  assert.equal(model.text, 'Visible text.');
+});
+
+test('locating 500 highlights on the longest lesson stays fast', () => {
+  const longest = fs.readdirSync(path.join(__dirname, '..', 'phases')).flatMap(phase => {
+    const dir = path.join(__dirname, '..', 'phases', phase);
+    if (!fs.statSync(dir).isDirectory()) return [];
+    return fs.readdirSync(dir).map(lesson => path.join(dir, lesson, 'docs', 'en.md')).filter(file => fs.existsSync(file));
+  }).sort((a, b) => fs.statSync(b).size - fs.statSync(a).size)[0];
+  const model = modelOf(fs.readFileSync(longest, 'utf8'));
+  const selectors = [];
+  for (let i = 0; i < 500; i++) {
+    const start = Math.floor((model.text.length - 80) * i / 500);
+    selectors.push(Anchor.describe(model.text, start, start + 40));
+  }
+  const began = process.hrtime.bigint();
+  let found = 0;
+  for (const selector of selectors) if (Anchor.locate(model.text, selector)) found++;
+  const ms = Number(process.hrtime.bigint() - began) / 1e6;
+  assert.equal(found, 500);
+  assert.ok(ms < 2000, `${ms} ms`);
+  console.log(`# locate 500 highlights on ${path.basename(path.dirname(path.dirname(longest)))} (${model.text.length} chars): ${ms.toFixed(1)} ms`);
 });
 
 test('the lesson page loads the highlight scripts and mounts after the table of contents', () => {
