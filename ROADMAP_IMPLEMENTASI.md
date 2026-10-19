@@ -357,16 +357,79 @@ model answer: Paris is the capital of France.
 
 ≈**3,4×** lebih cepat untuk invocation berulang; peak RSS tetap ~759 MB. Biaya run dingin ~11 s (menulis 131 MB) terbayar sejak run kedua.
 
-**(B) Kernel elementwise C** (`phase0/src/nano_elementwise.c`): `nano_rmsnorm_f32`, `nano_silu_mul_f32`, `nano_rope_f32`, `nano_softmax_axis1_f32`, di-bind lewat ctypes. Semua bernumerik identik dengan referensi NumPy (4 tes paritas, `rtol=1e-5`). Micro-benchmark 1536/4096-d menunjukkkan hasil yang **jujur: tidak seragam menang**:
+**(B) Kernel elementwise C** (`phase0/src/nano_elementwise.c`): `nano_rmsnorm_f32`, `nano_silu_mul_f32`, `nano_rope_f32`, `nano_softmax_axis1_f32`, di-bind lewat ctypes.
 
-| op | NumPy (µs) | C (µs) | rasio |
+Versi skalar pertama menghasilkan temuan **jujur: menang tidak seragam**, karena `expf` skalar kalah dari `exp` NumPy yang tervektorisasi:
+
+| op | NumPy (µs) | C skalar (µs) | rasio |
 | :--- | ---: | ---: | ---: |
-| rmsnorm(1536) | 20,10 | 12,52 | **1,61×** |
-| rope(16×96) | 19,09 | 9,62 | **1,99×** |
-| silu_mul(4096) | 28,83 | 41,83 | 0,69× |
-| softmax(16×512) | 45,33 | 58,92 | 0,77× |
+| rmsnorm(1536) | 20,10 | 12,52 | 1,61× |
+| rope(16×96) | 19,09 | 9,62 | 1,99× |
+| silu_mul(4096) | 28,83 | 41,83 | **0,69×** |
+| softmax(16×512) | 45,33 | 58,92 | **0,77×** |
 
-SiLU/softmax **kalah** karena `expf` skalar tidak melawan `exp` NumPy yang tervektorisasi; menang di situ hanya dengan aproksimasi exp — ditolak. Agregat hanya **0,180 ms/token (0,5 % dari token 38 ms)**: pada 700M, biaya elementwise memang bukan bottleneck, GEMV ternary O(hidden²) yang mendominasi. Keputusan: jalur C dipakai **hanya untuk RMSNorm + RoPE** (default `ew_ops`), NumPy untuk sisanya. `--no-ew` mematikan semuanya. Kernel tetap dipertahankan & teruji karena berguna begitu GEMV lebih cepat (mis. NPU/NEON) atau hidden bertambah.
+Menang di SiLU/softmax hanya bisa lewat aproksimasi exp — **ditolak** karena merusak numerik. Jadi edisi pertama mengaktifkan jalur C **hanya untuk RMSNorm + RoPE**.
+
+**(D) Eksp SIMD presisi penuh menutup celah itu.** Daripada mengaproksimasi, kernel diberi `exp` float32 sendiri (`exp(x) = 2^n · 2^f`, polinomial minimax derajat-6, 8-lane FMA) dengan galat relatif ~1e-7 — tepat di lantai pembulatan float32, bukan aproksimasi industri-berat. Setelah itu **keempat op menang** (diverifikasi ulang termasuk rentang lebar ±30 untuk SiLU dan ±60 untuk softmax):
+
+| op | NumPy (µs) | C AVX2 (µs) | rasio |
+| :--- | ---: | ---: | ---: |
+| rmsnorm(1536) | 18,48 | 9,73 | **1,90×** |
+| rope(16×96) | 18,34 | 9,40 | **1,95×** |
+| silu_mul(4096) | 26,59 | 12,49 | **2,13×** |
+| softmax(16×512) | 47,83 | 18,71 | **2,56×** |
+
+Karena itu `DEFAULT_EW_OPS` menjadi keempat op sekaligus; `--ew {auto,all,off}` memilih (`off` = jalur NumPy).
+
+Kenapa untungnya tetap kecil di 700M: satu layer memanggil **4× RMSNorm** (input, `inner_attn_ln`, post-attention, `ffn_layernorm`), 2× RoPE, 1× SiLU, 1× softmax — **193 op elementwise per token**. Dengan angka per-op di atas itu ≈2,1 ms (C) vs ≈4,4 ms (NumPy) per token, sementara GEMV ternary O(hidden²) memakan sisa ~36 ms. End-to-end best-of-6 (satu proses, bebas noise penjadwalan):
+
+| | ms/token | |
+| :--- | ---: | ---: |
+| `--ew off` (NumPy) | **43,74** | |
+| default (C, 4 op) | **37,95** | **1,15×** |
+
+Selisih ~5,8 ms/token lebih besar dari 2,1 ms murni per-op karena NumPy juga membayar overhead pemanggilan + alokasi temporer 193×/token. **Crossover**: porsi elementwise hanya akan tumbuh bila GEMV dipercepat (NEON/NPU):
+
+| GEMV × | porsi elementwise (C) | (NumPy) |
+| ---: | ---: | ---: |
+| 1,0× | 5,6 % | 11,0 % |
+| 0,5× | 10,6 % | 19,8 % |
+| 0,25× | 19,2 % | 33,1 % |
+| 0,1× | 37,2 % | 55,3 % |
+
+Jadi kernel ini adalah investasi untuk fase mobile: di NPU/NEON, jalur C penuh yang sudah aktif sekarang mencegah elementwise jadi bottleneck berikutnya.
+
+**(E) Prompt kompak** (`--prompt-style {auto,full,compact}`). Prefix statis 444 token terbagi: header 65, daftar tool 174, few-shot 205. Varian kompak (header pendek, satu baris daftar tool, **satu** contoh) memangkasnya ke **172 token (−61 %)**, cache 131 → **51 MB**.
+
+Evaluasi 10 tool (nama dipaksa via logit masking, 5 batch × 2 batch *decode*):
+
+| | nama tool benar | prefill prefix | cache |
+| :--- | ---: | ---: | ---: |
+| full | **9/10** | 29,4 s | 131 MB |
+| compact | **9/10** | **9,8 s** | 51 MB |
+
+Seri: `web_search`↔`http_get` salah di keduanya (alasan `--planner route` ada). Tapi di jalur **generasi bebas** (tanpa constrained) few-shot panjang tetap perlu:
+
+| | parseable | nama benar |
+| :--- | ---: | ---: |
+| full | **5/8** | 5/8 |
+| compact | 1/8 | 1/8 |
+
+Karena itu defaultnya `auto`: **kompak bila constrained** (nama dimasking / arg diforce), **full bila bebas**. End-to-end (CRUD, `--constrained-args` + `--kv-cache-dir`):
+
+| | run dingin | run hangat |
+| :--- | ---: | ---: |
+| prefix full (sebelumnya) | 56,6 s | 13,5 s |
+| prefix kompak | **18,0 s** | **8,0 s** |
+
+### 7.8 Verifikasi
+
+```bash
+python3 -m unittest tests.test_pipeline -v   # 32 tes: ternarisasi, packing, kernel (int8+packed), GEMV fp32, tokenizer, name mapping, retriever online, persistensi KV (A), paritas kernel elementwise C + eksp SIMD rentang lebar + pemilihan op (B/D), gaya prompt (E)
+python3 -m unittest tests.test_tools -v      # 42 tes: parser, sandbox, CRUD, deny-list bash, skema argumen, router + router multi-langkah (C), dedup langkah, loop agent (runner palsu), prompt full/kompak (E)
+python3 phase0/python/test_bitnet.py          # 4 tes matematika BitNet
+python3 phase3/python/test_semantic_dsl.py    # 2 tes semantic DSL
+```
 
 **(C) Router multi-langkah** (`route_plan`). `route_task` (7.6) hanya memetakan satu tugas → satu tool. `route_plan` memecah tugas majemuk pada konektor urutan eksplisit (`then`, `and then`, `after that`, `lalu`, `kemudian`, `terus`, `;`) — **tidak** pada "and" telanjang, agar `append X and Y to file` tetap satu call. Bagian lanjutan yang merujuk balik dengan pronomina ("read it") mewarisi path dari langkah sebelumnya. Bagian tanpa tool ("summarize it") dilewati, menjadi tugas model. Planner `route` mengeksekusi seluruh rencana lalu model hanya membahasakan jawaban:
 
