@@ -345,11 +345,44 @@ model answer: Paris is the capital of France.
 
 **(5) Deteksi langkah berulang.** Model greedy dapat terpaku pada satu call dan mengulangnya (teramati: `write_file` 3× dengan arg identik). Bila signature `(nama, arg-sorted)` sudah dieksekusi, loop berhenti dan menjawab dengan hasil pertama — tak ada pekerjaan berulang.
 
-### 7.7 Verifikasi
+### 7.7 Optimasi Lanjutan: Cache Persisten, Kernel Elementwise C, Router Multi-Langkah
+
+**(A) Cache KV lintas-permintaan (persist ke disk).** Prefill prefix statis agent (preamble tool + few-shot, 445 token) memakan ~42 s dan diulang tiap invocation. Karena cache KV adalah fungsi murni dari id token × bobot, ia aman diserialisasi. `SmolLM2Runner.save_state()/load_state()` menyimpan `pos`, `fed_ids`, `_last_logits`, dan K/V per layer ke `.npz`; kuncinya `sha1(model_tag + id token prefix)`. Prefix dipisah dari task via `build_agent_prompt_parts()`, jadi prefix+few-shot yang sama dipakai ulang oleh tugas apa pun. `--kv-cache-dir DIR` mengaktifkan.
+
+| | prefill | waktu dinding |
+| :--- | ---: | ---: |
+| baseline (tanpa cache) | 445 token tiap run | **45,7 s** |
+| run dingin (isi cache) | 445 token (+ simpan 131 MB) | **56,6 s** |
+| run hangat (muat cache) | 0 token | **13,5 s** |
+
+≈**3,4×** lebih cepat untuk invocation berulang; peak RSS tetap ~759 MB. Biaya run dingin ~11 s (menulis 131 MB) terbayar sejak run kedua.
+
+**(B) Kernel elementwise C** (`phase0/src/nano_elementwise.c`): `nano_rmsnorm_f32`, `nano_silu_mul_f32`, `nano_rope_f32`, `nano_softmax_axis1_f32`, di-bind lewat ctypes. Semua bernumerik identik dengan referensi NumPy (4 tes paritas, `rtol=1e-5`). Micro-benchmark 1536/4096-d menunjukkkan hasil yang **jujur: tidak seragam menang**:
+
+| op | NumPy (µs) | C (µs) | rasio |
+| :--- | ---: | ---: | ---: |
+| rmsnorm(1536) | 20,10 | 12,52 | **1,61×** |
+| rope(16×96) | 19,09 | 9,62 | **1,99×** |
+| silu_mul(4096) | 28,83 | 41,83 | 0,69× |
+| softmax(16×512) | 45,33 | 58,92 | 0,77× |
+
+SiLU/softmax **kalah** karena `expf` skalar tidak melawan `exp` NumPy yang tervektorisasi; menang di situ hanya dengan aproksimasi exp — ditolak. Agregat hanya **0,180 ms/token (0,5 % dari token 38 ms)**: pada 700M, biaya elementwise memang bukan bottleneck, GEMV ternary O(hidden²) yang mendominasi. Keputusan: jalur C dipakai **hanya untuk RMSNorm + RoPE** (default `ew_ops`), NumPy untuk sisanya. `--no-ew` mematikan semuanya. Kernel tetap dipertahankan & teruji karena berguna begitu GEMV lebih cepat (mis. NPU/NEON) atau hidden bertambah.
+
+**(C) Router multi-langkah** (`route_plan`). `route_task` (7.6) hanya memetakan satu tugas → satu tool. `route_plan` memecah tugas majemuk pada konektor urutan eksplisit (`then`, `and then`, `after that`, `lalu`, `kemudian`, `terus`, `;`) — **tidak** pada "and" telanjang, agar `append X and Y to file` tetap satu call. Bagian lanjutan yang merujuk balik dengan pronomina ("read it") mewarisi path dari langkah sebelumnya. Bagian tanpa tool ("summarize it") dilewati, menjadi tugas model. Planner `route` mengeksekusi seluruh rencana lalu model hanya membahasakan jawaban:
+
+```text
+$ --agent --planner route --prompt "create todo.txt with the content buy milk then read it"
+🧭 router -> write_file({"path": "todo.txt", "content": "buy milk"}) -> 'wrote 8 bytes to todo.txt'
+🧭 router -> read_file({"path": "todo.txt"})                          -> 'buy milk'
+```
+
+Dua tool tereksekusi berurutan dari satu kalimat; "it" → `todo.txt` diselesaikan deterministik.
+
+### 7.8 Verifikasi
 
 ```bash
-python3 -m unittest tests.test_pipeline -v   # 20 tes: ternarisasi, packing, kernel (int8+packed), GEMV fp32, tokenizer, name mapping, retriever online
-python3 -m unittest tests.test_tools -v      # 33 tes: parser, sandbox, CRUD, deny-list bash, skema argumen, router, dedup langkah, loop agent (runner palsu), few-shot prompt
+python3 -m unittest tests.test_pipeline -v   # 28 tes: ternarisasi, packing, kernel (int8+packed), GEMV fp32, tokenizer, name mapping, retriever online, persistensi KV (A), paritas kernel elementwise C + pemilihan op (B)
+python3 -m unittest tests.test_tools -v      # 39 tes: parser, sandbox, CRUD, deny-list bash, skema argumen, router + router multi-langkah (C), dedup langkah, loop agent (runner palsu), few-shot prompt
 python3 phase0/python/test_bitnet.py          # 4 tes matematika BitNet
 python3 phase3/python/test_semantic_dsl.py    # 2 tes semantic DSL
 ```
