@@ -3,7 +3,7 @@ CC ?= gcc
 # flag the `#pragma omp` pragmas are simply ignored (graceful single-thread).
 CFLAGS ?= -O3 -mavx2 -mfma -fopenmp -Wall -Wextra -Iinclude -fPIC
 
-SRCS = src/ternary_ref.c src/ternary_avx2.c
+SRCS = src/ternary_ref.c src/ternary_avx2.c src/nano_elementwise.c
 OBJS = $(SRCS:.c=.o)
 BENCH_SRC = bench/benchmark.c
 BENCH_BIN = bin/benchmark

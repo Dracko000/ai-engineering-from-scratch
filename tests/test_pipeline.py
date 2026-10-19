@@ -14,6 +14,7 @@ from __future__ import annotations
 import importlib.util
 import os
 import sys
+import tempfile
 import unittest
 
 import numpy as np
@@ -261,6 +262,137 @@ class TestWebRetriever(unittest.TestCase):
         ctx, srcs = retriever.ground("anything")
         self.assertEqual(ctx, "")
         self.assertTrue(any("error" in s for s in srcs))
+
+
+class TestKVPersistence(unittest.TestCase):
+    """The cross-request prefix cache must round-trip exactly."""
+
+    def _stub(self, n_layers=2, seq=3, heads=2, hd=4):
+        r = object.__new__(run.SmolLM2Runner)
+        r.n_layers = n_layers
+        r.pos = seq
+        r.fed_ids = [1, 5, 9][:seq]
+        r.kv_cache = [
+            {"k": np.arange(seq * heads * hd, dtype=np.float32).reshape(seq, heads, hd) + i,
+             "v": np.ones((seq, heads, hd), np.float32) * (i + 1)}
+            for i in range(n_layers)
+        ]
+        r._last_logits = np.arange(7, dtype=np.float32)
+        return r
+
+    def test_round_trip(self):
+        src = self._stub()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "prefix.npz")
+            src.save_state(path)
+            dst = object.__new__(run.SmolLM2Runner)
+            dst.n_layers = src.n_layers
+            self.assertTrue(dst.load_state(path))
+        self.assertEqual(dst.pos, src.pos)
+        self.assertEqual(dst.fed_ids, src.fed_ids)
+        np.testing.assert_allclose(dst._last_logits, src._last_logits)
+        for got, want in zip(dst.kv_cache, src.kv_cache):
+            np.testing.assert_allclose(got["k"], want["k"])
+            np.testing.assert_allclose(got["v"], want["v"])
+
+    def test_missing_file_returns_false(self):
+        stub = object.__new__(run.SmolLM2Runner)
+        stub.n_layers = 1
+        self.assertFalse(stub.load_state("/nonexistent/nanow-prefix.npz"))
+
+
+_LIB = os.path.join(REPO, "phase0", "bin", "libternary.so")
+
+
+@unittest.skipUnless(os.path.exists(_LIB), "libternary.so not built")
+class TestElementwiseC(unittest.TestCase):
+    """The C elementwise kernels must match the NumPy reference."""
+
+    def setUp(self):
+        self.k = run.TernaryKernel(_LIB)
+        if not getattr(self.k, "has_ew", False):
+            self.skipTest("libternary.so lacks the elementwise kernels")
+        self.rng = np.random.default_rng(0)
+
+    def test_rmsnorm_matches_numpy(self):
+        x = self.rng.standard_normal(96).astype(np.float32)
+        w = self.rng.standard_normal(96).astype(np.float32)
+        np.testing.assert_allclose(self.k.rmsnorm(x, w, 1e-5),
+                                   run.rms_norm(x, w, 1e-5), rtol=1e-5, atol=1e-5)
+
+    def test_silu_mul_matches_numpy(self):
+        g = (self.rng.standard_normal(64).astype(np.float32) * 5)
+        u = self.rng.standard_normal(64).astype(np.float32)
+        np.testing.assert_allclose(self.k.silu_mul(g, u), run.silu(g) * u,
+                                   rtol=1e-5, atol=1e-6)
+
+    def test_rope_matches_numpy(self):
+        x = self.rng.standard_normal((4, 96)).astype(np.float32)
+        ref = x.copy()
+        cos = self.rng.standard_normal(48).astype(np.float32)
+        sin = self.rng.standard_normal(48).astype(np.float32)
+        self.k.rope_inplace(x, cos, sin, 4, 96)
+        np.testing.assert_allclose(x, run.apply_rope(ref, cos, sin),
+                                   rtol=1e-5, atol=1e-6)
+
+    def test_softmax_axis1_matches_numpy(self):
+        scores = self.rng.standard_normal((3, 17, 2)).astype(np.float32)
+        got = scores.copy()
+        self.k.softmax_axis1(got)
+        np.testing.assert_allclose(got, run.softmax(scores, axis=1),
+                                   rtol=1e-5, atol=1e-6)
+
+
+class FakeEW:
+    """Records which elementwise ops the runner routes to C."""
+
+    has_ew = True
+    calls: list = []
+
+    def rmsnorm(self, x, w, eps):
+        FakeEW.calls.append("rmsnorm")
+        return np.asarray(x, dtype=np.float32)
+
+    def silu_mul(self, g, u):
+        FakeEW.calls.append("silu")
+        return np.asarray(g, dtype=np.float32)
+
+    def rope_inplace(self, *a):
+        FakeEW.calls.append("rope")
+
+    def softmax_axis1(self, s):
+        FakeEW.calls.append("softmax")
+
+
+class TestElementwiseSelection(unittest.TestCase):
+    """C is used only where it beats NumPy's vectorised exp."""
+
+    def _stub(self, ew_ops):
+        r = object.__new__(run.SmolLM2Runner)
+        r.eps = 1e-5
+        r.ew_ops = ew_ops
+        r.kernel = FakeEW()
+        return r
+
+    def test_default_routes_rmsnorm_and_rope_to_c(self):
+        FakeEW.calls = []
+        r = self._stub({"rmsnorm", "rope"})
+        x = np.ones(8, np.float32)
+        r._rms(x, x)
+        r._rope(np.ones((2, 4), np.float32), np.ones(2, np.float32),
+                np.ones(2, np.float32))
+        r._silu_mul(x, x)
+        r._softmax_axis1(np.ones((2, 3, 1), np.float32))
+        self.assertIn("rmsnorm", FakeEW.calls)
+        self.assertIn("rope", FakeEW.calls)
+        self.assertNotIn("silu", FakeEW.calls)
+        self.assertNotIn("softmax", FakeEW.calls)
+
+    def test_empty_set_uses_numpy_only(self):
+        FakeEW.calls = []
+        r = self._stub(set())
+        r._rms(np.ones(8, np.float32), np.ones(8, np.float32))
+        self.assertEqual(FakeEW.calls, [])
 
 
 if __name__ == "__main__":

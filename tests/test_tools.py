@@ -97,6 +97,12 @@ class TestAgentLoop(unittest.TestCase):
         # The observation must be fed back into the next prompt.
         self.assertIn("Observation:", runner.prompts[1])
 
+    def test_prompt_parts_recompose(self):
+        prefix, suffix = tools.build_agent_prompt_parts(self.reg, "do x")
+        self.assertEqual(prefix + suffix, tools.build_agent_prompt(self.reg, "do x"))
+        self.assertTrue(suffix.startswith("Task:"))
+        self.assertNotIn("do x", prefix)
+
     def test_identical_call_repeats_are_deduped(self):
         # A greedy model can latch onto one call; the loop must stop early and
         # answer with the first result instead of re-running the same call.
@@ -262,6 +268,33 @@ class TestRouter(unittest.TestCase):
 
     def test_no_match_returns_none(self):
         self.assertIsNone(tools.route_task("what is the meaning of life"))
+
+    def test_plan_sequence_inherits_path(self):
+        plan = tools.route_plan("create todo.txt with the content buy milk then read it")
+        self.assertEqual([c.name for c in plan], ["write_file", "read_file"])
+        self.assertEqual(plan[1].args["path"], "todo.txt")
+
+    def test_plan_splits_on_semicolon(self):
+        plan = tools.route_plan("list the files; then delete report.txt")
+        self.assertEqual([c.name for c in plan], ["list_dir", "delete_file"])
+
+    def test_plan_skips_non_tool_part(self):
+        self.assertEqual([c.name for c in tools.route_plan("read report.txt and summarize it")],
+                         ["read_file"])
+
+    def test_plan_empty_when_no_tool(self):
+        self.assertEqual(tools.route_plan("tell me a joke"), [])
+
+    def test_route_planner_runs_full_plan(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            reg = tools.ToolRegistry(root=tmp)
+            runner = FakeRunner(["Done: todo.txt says buy milk."])
+            out = tools.run_agent(
+                runner, reg, "create todo.txt with the content buy milk then read it",
+                planner="route", verbose=False)
+            self.assertEqual([c["name"] for c in out["calls"]],
+                             ["write_file", "read_file"])
+            self.assertTrue(all(c["ok"] for c in out["calls"]))
 
     def test_route_planner_executes_and_answers(self):
         with tempfile.TemporaryDirectory() as tmp:

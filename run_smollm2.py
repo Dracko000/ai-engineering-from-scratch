@@ -454,6 +454,26 @@ class TernaryKernel:
                             ctypes.c_int, ctypes.c_int]
             self._fng = fng
 
+        # Elementwise transformer ops (RMSNorm, SiLU·gate, RoPE, softmax axis=1).
+        # Optional: older builds simply lack them and the runner falls back to
+        # the NumPy reference.
+        self.has_ew = hasattr(self.lib, "nano_rmsnorm_f32")
+        if self.has_ew:
+            self.lib.nano_rmsnorm_f32.restype = None
+            self.lib.nano_rmsnorm_f32.argtypes = [ctypes.c_void_p, ctypes.c_void_p,
+                                                  ctypes.c_void_p, ctypes.c_int,
+                                                  ctypes.c_float]
+            self.lib.nano_silu_mul_f32.restype = None
+            self.lib.nano_silu_mul_f32.argtypes = [ctypes.c_void_p, ctypes.c_void_p,
+                                                   ctypes.c_void_p, ctypes.c_int]
+            self.lib.nano_rope_f32.restype = None
+            self.lib.nano_rope_f32.argtypes = [ctypes.c_void_p, ctypes.c_void_p,
+                                               ctypes.c_void_p, ctypes.c_int,
+                                               ctypes.c_int]
+            self.lib.nano_softmax_axis1_f32.restype = None
+            self.lib.nano_softmax_axis1_f32.argtypes = [ctypes.c_void_p, ctypes.c_int,
+                                                        ctypes.c_int, ctypes.c_int]
+
     def gemv(self, W: np.ndarray, x: np.ndarray, scale: float) -> np.ndarray:
         M, K = W.shape
         x = np.ascontiguousarray(x, dtype=np.float32)
@@ -489,6 +509,33 @@ class TernaryKernel:
         y = np.empty(M, dtype=np.float32)
         self._fng(y.ctypes.data, W.ctypes.data, x.ctypes.data, M, K)
         return y
+
+    def rmsnorm(self, x: np.ndarray, weight: np.ndarray, eps: float) -> np.ndarray:
+        x = np.ascontiguousarray(x, dtype=np.float32)
+        w = np.ascontiguousarray(weight, dtype=np.float32)
+        out = np.empty_like(x)
+        self.lib.nano_rmsnorm_f32(out.ctypes.data, x.ctypes.data, w.ctypes.data,
+                                  x.size, float(eps))
+        return out
+
+    def silu_mul(self, gate: np.ndarray, up: np.ndarray) -> np.ndarray:
+        gate = np.ascontiguousarray(gate, dtype=np.float32)
+        up = np.ascontiguousarray(up, dtype=np.float32)
+        out = np.empty_like(gate)
+        self.lib.nano_silu_mul_f32(out.ctypes.data, gate.ctypes.data, up.ctypes.data,
+                                   gate.size)
+        return out
+
+    def rope_inplace(self, x: np.ndarray, cos: np.ndarray, sin: np.ndarray,
+                     n_heads: int, head_dim: int) -> None:
+        cos = np.ascontiguousarray(cos, dtype=np.float32)
+        sin = np.ascontiguousarray(sin, dtype=np.float32)
+        self.lib.nano_rope_f32(x.ctypes.data, cos.ctypes.data, sin.ctypes.data,
+                               n_heads, head_dim)
+
+    def softmax_axis1(self, x: np.ndarray) -> None:
+        axis0, n, axis2 = x.shape
+        self.lib.nano_softmax_axis1_f32(x.ctypes.data, axis0, n, axis2)
 
 
 def rope_frequencies(dim: int, max_len: int, theta: float = 100000.0) -> tuple[np.ndarray, np.ndarray]:
@@ -561,6 +608,10 @@ class SmolLM2Runner:
         self.pos = 0
         self.fed_ids: list[int] = []
         self._last_logits = None
+        # Only the ops where the scalar C kernel beats NumPy's vectorised exp
+        # (RMSNorm, RoPE). SiLU/softmax stay on NumPy: scalar expf loses to
+        # SIMD exp there, and we refuse to approximate exp to win it back.
+        self.ew_ops = {"rmsnorm", "rope"}
 
     def reset(self):
         self.kv_cache = [{"k": None, "v": None} for _ in range(self.n_layers)]
@@ -589,6 +640,33 @@ class SmolLM2Runner:
             return self.kernel.fp32_gemv(W, x)
         return x @ W.T
 
+    def _rms(self, x: np.ndarray, weight: np.ndarray) -> np.ndarray:
+        """RMSNorm via the C kernel when present, else the NumPy reference."""
+        k = self.kernel
+        if "rmsnorm" in self.ew_ops and k is not None and getattr(k, "has_ew", False):
+            return k.rmsnorm(x, weight, self.eps)
+        return rms_norm(x, weight, self.eps)
+
+    def _silu_mul(self, gate: np.ndarray, up: np.ndarray) -> np.ndarray:
+        k = self.kernel
+        if "silu" in self.ew_ops and k is not None and getattr(k, "has_ew", False):
+            return k.silu_mul(gate, up)
+        return silu(gate) * up
+
+    def _rope(self, x: np.ndarray, cos: np.ndarray, sin: np.ndarray) -> np.ndarray:
+        k = self.kernel
+        if "rope" in self.ew_ops and k is not None and getattr(k, "has_ew", False):
+            k.rope_inplace(x, cos, sin, x.shape[0], x.shape[1])
+            return x
+        return apply_rope(x, cos, sin)
+
+    def _softmax_axis1(self, scores: np.ndarray) -> np.ndarray:
+        k = self.kernel
+        if "softmax" in self.ew_ops and k is not None and getattr(k, "has_ew", False):
+            k.softmax_axis1(scores)
+            return scores
+        return softmax(scores, axis=1)
+
     def forward_token(self, token_id: int) -> np.ndarray:
         """Forward pass for a single token, returns logits over vocabulary."""
         # Embedding lookup
@@ -602,7 +680,7 @@ class SmolLM2Runner:
 
             # --- Pre-attention RMSNorm ---
             norm_w = self.t[f"layers.{layer}.input_layernorm"]["data"]
-            x = rms_norm(x, norm_w, self.eps)
+            x = self._rms(x, norm_w)
 
             # --- Multi-Head Attention with GQA ---
             q = self._linear(x, f"layers.{layer}.attn.q_proj")  # (n_heads * head_dim,)
@@ -617,8 +695,8 @@ class SmolLM2Runner:
             # Apply RoPE to Q and K
             cos_pos = self.rope_cos[pos]  # (head_dim/2,)
             sin_pos = self.rope_sin[pos]
-            q = apply_rope(q, cos_pos, sin_pos)
-            k = apply_rope(k, cos_pos, sin_pos)
+            q = self._rope(q, cos_pos, sin_pos)
+            k = self._rope(k, cos_pos, sin_pos)
 
             # Update KV cache
             cache = self.kv_cache[layer]
@@ -640,14 +718,14 @@ class SmolLM2Runner:
             Vt = np.ascontiguousarray(V.transpose(1, 0, 2))  # (n_kv, seq, head_dim)
             # scores[kv] = Kt[kv] @ qg[kv]^T  -> (n_kv, seq, n_groups)
             scores = (Kt @ qg.transpose(0, 2, 1)) * self.attn_scale
-            probs = softmax(scores, axis=1)  # over seq_len
+            probs = self._softmax_axis1(scores)  # over seq_len
             # out[kv] = probs[kv]^T @ Vt[kv]  -> (n_kv, n_groups, head_dim)
             attn_out = (probs.transpose(0, 2, 1) @ Vt).reshape(self.n_heads * self.head_dim)
 
             # Optional BitNet sub-norm on the attention output (before o_proj)
             sub = f"layers.{layer}.attn.inner_attn_ln"
             if sub in self.t:
-                attn_out = rms_norm(attn_out, self.t[sub]["data"], self.eps)
+                attn_out = self._rms(attn_out, self.t[sub]["data"])
 
             # Output projection
             x = self._linear(attn_out, f"layers.{layer}.attn.o_proj")
@@ -658,16 +736,16 @@ class SmolLM2Runner:
 
             # --- Post-attention RMSNorm ---
             norm_w2 = self.t[f"layers.{layer}.post_attention_layernorm"]["data"]
-            x = rms_norm(x, norm_w2, self.eps)
+            x = self._rms(x, norm_w2)
 
             # --- SwiGLU MLP ---
             gate = self._linear(x, f"layers.{layer}.mlp.gate_proj")  # (inter,)
             up = self._linear(x, f"layers.{layer}.mlp.up_proj")      # (inter,)
-            x = silu(gate) * up
+            x = self._silu_mul(gate, up)
             # Optional BitNet sub-norm on the MLP intermediate (before down_proj)
             sub = f"layers.{layer}.mlp.ffn_layernorm"
             if sub in self.t:
-                x = rms_norm(x, self.t[sub]["data"], self.eps)
+                x = self._rms(x, self.t[sub]["data"])
             x = self._linear(x, f"layers.{layer}.mlp.down_proj")     # (hidden,)
 
             # Residual
@@ -675,7 +753,7 @@ class SmolLM2Runner:
 
         # Final RMSNorm
         norm_w = self.t["final_norm"]["data"]
-        x = rms_norm(x, norm_w, self.eps)
+        x = self._rms(x, norm_w)
 
         # LM Head: use a dedicated lm_head when the model does not tie weights,
         # otherwise reuse the token embedding matrix.
@@ -984,6 +1062,43 @@ class SmolLM2Runner:
             logits = self.forward_token(next_id)
         return self.tokenizer.decode(generated)
 
+    def save_state(self, path: str) -> None:
+        """Persist the KV cache and position so a later run can skip prefill.
+
+        A fixed prompt prefix (the agent's tool preamble + few-shot) costs tens
+        of seconds to prefill on this hardware. The cache is a pure function of
+        the token ids and the weights, so it is safe to serialize and replay.
+        """
+        arrays = {
+            "pos": np.array(self.pos, dtype=np.int64),
+            "fed_ids": np.asarray(self.fed_ids, dtype=np.int32),
+        }
+        if self._last_logits is not None:
+            arrays["logits"] = np.asarray(self._last_logits, dtype=np.float32)
+        for i, cache in enumerate(self.kv_cache):
+            if cache["k"] is not None:
+                arrays[f"k{i}"] = cache["k"]
+                arrays[f"v{i}"] = cache["v"]
+        np.savez(path, **arrays)
+
+    def load_state(self, path: str) -> bool:
+        """Restore a cache written by ``save_state``; returns False if absent."""
+        if not os.path.exists(path):
+            return False
+        with np.load(path, allow_pickle=False) as z:
+            pos = int(z["pos"])
+            fed_ids = [int(x) for x in z["fed_ids"]]
+            kv_cache = [{"k": None, "v": None} for _ in range(self.n_layers)]
+            for i in range(self.n_layers):
+                if f"k{i}" in z:
+                    kv_cache[i] = {"k": z[f"k{i}"], "v": z[f"v{i}"]}
+            logits = z["logits"] if "logits" in z else None
+        self.kv_cache = kv_cache
+        self.pos = pos
+        self.fed_ids = fed_ids
+        self._last_logits = logits
+        return True
+
 
 # ---------------------------------------------------------------------------
 # Main
@@ -1032,6 +1147,10 @@ def main():
                         help="Who chooses the tool: model | route (deterministic) | hybrid")
     parser.add_argument("--no-cache", action="store_true",
                         help="Disable KV-cache reuse across agent steps")
+    parser.add_argument("--no-ew", action="store_true",
+                        help="Disable the C elementwise kernels (RMSNorm/RoPE) and use the NumPy reference")
+    parser.add_argument("--kv-cache-dir", default=None,
+                        help="Persist the static prompt-prefix KV cache here to skip its prefill on later runs")
     args = parser.parse_args()
 
     np.random.seed(args.seed)
@@ -1095,6 +1214,9 @@ def main():
 
     # Create runner
     runner = SmolLM2Runner(tensors, config, tokenizer, kernel=kernel)
+    runner.model_tag = args.model
+    if args.no_ew:
+        runner.ew_ops = set()
 
     # --- Agent mode: tool-use loop (file CRUD, bash, HTTP, web search) ---
     if args.agent:
@@ -1116,7 +1238,8 @@ def main():
                             constrained=args.constrained,
                             constrained_args=args.constrained_args,
                             planner=args.planner,
-                            reuse_cache=not args.no_cache)
+                            reuse_cache=not args.no_cache,
+                            kv_cache_dir=args.kv_cache_dir)
 
         print("\n" + "=" * 70)
         print(" AGENT COMPLETE")

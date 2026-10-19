@@ -102,6 +102,17 @@ void pack_ternary_bitmasks(uint64_t *mask_pos,
                            const int8_t *W,
                            int M, int K);
 
+/**
+ * Elementwise transformer ops (scalar C; see nano_elementwise.c). These mirror
+ * the NumPy reference in run_smollm2.py and exist to remove per-call NumPy
+ * overhead from the single-token decode path.
+ */
+void nano_rmsnorm_f32(float *out, const float *x, const float *w, int n, float eps);
+void nano_silu_mul_f32(float *out, const float *gate, const float *up, int n);
+void nano_rope_f32(float *x, const float *cos, const float *sin,
+                   int n_heads, int head_dim);
+void nano_softmax_axis1_f32(float *x, int axis0, int n, int axis2);
+
 #ifdef __cplusplus
 }
 #endif

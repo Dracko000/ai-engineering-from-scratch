@@ -27,6 +27,7 @@ Run the standalone CLI:
 from __future__ import annotations
 
 import ast
+import hashlib
 import json
 import os
 import re
@@ -518,13 +519,14 @@ FEWSHOT = (
 )
 
 
-def build_agent_prompt(registry: ToolRegistry, task: str, fewshot: bool = True) -> str:
-    """Compose the tool protocol preamble for a completion-style model.
+def build_agent_prompt_parts(registry: ToolRegistry, task: str,
+                             fewshot: bool = True) -> tuple[str, str]:
+    """Return ``(static_prefix, task_suffix)`` for the agent prompt.
 
-    ``fewshot`` adds three worked examples. For a small model this does far more
-    for tool *selection* than any prompt wording alone.
+    The prefix holds the tool preamble and few-shot examples; it does not depend
+    on the task, so it is the part worth caching a KV prefill for.
     """
-    return (
+    prefix = (
         "You are an agent that can use tools.\n"
         f"{registry.describe()}\n\n"
         "To use a tool, write one line exactly like:\n"
@@ -532,8 +534,18 @@ def build_agent_prompt(registry: ToolRegistry, task: str, fewshot: bool = True) 
         "Then stop and wait for the Observation. When you have the final answer, "
         "write it without any TOOL line.\n\n"
         + (FEWSHOT + "\n" if fewshot else "")
-        + f"Task: {task}\n"
     )
+    return prefix, f"Task: {task}\n"
+
+
+def build_agent_prompt(registry: ToolRegistry, task: str, fewshot: bool = True) -> str:
+    """Compose the tool protocol preamble for a completion-style model.
+
+    ``fewshot`` adds three worked examples. For a small model this does far more
+    for tool *selection* than any prompt wording alone.
+    """
+    prefix, suffix = build_agent_prompt_parts(registry, task, fewshot)
+    return prefix + suffix
 
 
 def _first_quoted(text: str) -> Optional[str]:
@@ -619,6 +631,48 @@ def route_task(task: str, registry: Optional[ToolRegistry] = None) -> Optional[T
     return None
 
 
+# Sequencing connectors that mark a compound task. We split only on explicit
+# ordering ("then", "lalu", ...), never on a bare "and", so that phrases like
+# "append X and Y to file" stay a single call.
+_SEQUENCE_RE = re.compile(
+    r"\s*(?:\band then\b|\bafter that\b|\bthen\b|\blalu\b|\bkemudian\b|\bterus\b|;)\s*",
+    re.I,
+)
+_REFER_RE = re.compile(
+    r"\b(it|them|that|the file|that file|the folder|the directory|the result)\b", re.I
+)
+
+
+def route_plan(task: str, registry: Optional[ToolRegistry] = None) -> list[ToolCall]:
+    """Route a compound task to an ordered list of tool calls.
+
+    Splits on explicit sequencing words (``then`` / ``lalu`` / ``;`` ...) and
+    routes each part with :func:`route_task`. A later part that refers back with
+    a pronoun ("read it") inherits the path from the previous step, which is what
+    makes "create todo.txt with content hi then read it" work end to end.
+
+    Parts that map to no tool (e.g. "summarize it") are simply the model's job
+    afterwards, so they are skipped here rather than being forced into a call.
+    """
+    parts = [p.strip() for p in _SEQUENCE_RE.split(task) if p.strip()]
+    if not parts:
+        parts = [task.strip()]
+    plan: list[ToolCall] = []
+    last_path: Optional[str] = None
+    for part in parts:
+        segment = part
+        if last_path and _REFER_RE.search(segment) and not _first_path(segment):
+            segment = f"{segment} {last_path}"
+        call = route_task(segment, registry)
+        if call is None:
+            continue
+        plan.append(call)
+        for key in ("path", "src", "dst"):
+            if key in call.args:
+                last_path = call.args[key]
+    return plan
+
+
 def _final_answer(runner, task: str, observation: str, temperature: float) -> str:
     prompt = (f"Task: {task}\n"
               f"Observation: {observation}\n"
@@ -631,7 +685,8 @@ def run_agent(runner, registry: ToolRegistry, task: str, max_steps: int = 3,
               step_tokens: int = 48, temperature: float = 0.3,
               top_p: float = 0.9, verbose: bool = True, prime: bool = False,
               constrained: bool = False, constrained_args: bool = False,
-              planner: str = "model", reuse_cache: bool = True) -> dict:
+              planner: str = "model", reuse_cache: bool = True,
+              kv_cache_dir: Optional[str] = None) -> dict:
     """Drive the model through tool-use steps until it answers or runs out.
 
     The tiny model rarely emits a perfect call, so the loop is deliberately
@@ -651,21 +706,30 @@ def run_agent(runner, registry: ToolRegistry, task: str, max_steps: int = 3,
 
     ``reuse_cache`` reuses the runner's KV cache across steps via
     ``generate_continue`` so growing prompts are not re-prefilled from scratch.
+
+    ``kv_cache_dir`` persists the *static* prompt prefix's KV cache to disk so
+    a later run with the same tools skips its prefill entirely (the prefix is
+    the tool preamble plus few-shot, which is the expensive, task-independent
+    part).
     """
     transcript, calls = [], []
 
     # --- router planner: decide deterministically, model only phrases ---
     if planner in {"route", "hybrid"}:
-        planned = route_task(task, registry)
-        if planned is not None:
-            result = registry.call(planned.name, **planned.args)
-            calls.append({"name": planned.name, "args": planned.args, "ok": result.ok})
-            transcript.append({"role": "tool", "name": planned.name, "output": result.output})
-            if verbose:
-                print(f"  🧭 router -> {planned.name}("
-                      f"{json.dumps(planned.args, ensure_ascii=False)}) "
-                      f"-> {result.output[:120]!r}", flush=True)
-            answer = _final_answer(runner, task, result.render(), temperature)
+        plan = route_plan(task, registry)
+        if plan:
+            observations = []
+            for planned in plan:
+                result = registry.call(planned.name, **planned.args)
+                calls.append({"name": planned.name, "args": planned.args, "ok": result.ok})
+                transcript.append({"role": "tool", "name": planned.name,
+                                   "output": result.output})
+                observations.append(f"{planned.name} -> {result.render()}")
+                if verbose:
+                    print(f"  🧭 router -> {planned.name}("
+                          f"{json.dumps(planned.args, ensure_ascii=False)}) "
+                          f"-> {result.output[:100]!r}", flush=True)
+            answer = _final_answer(runner, task, "\n".join(observations), temperature)
             if verbose:
                 print(f"  model answer: {answer or '(empty)'}", flush=True)
             return {"task": task, "answer": answer, "calls": calls,
@@ -676,13 +740,33 @@ def run_agent(runner, registry: ToolRegistry, task: str, max_steps: int = 3,
             return {"task": task, "answer": "", "calls": [], "transcript": [],
                     "planner": "route"}
 
-    context = build_agent_prompt(registry, task)
+    prefix_text, task_text = build_agent_prompt_parts(registry, task)
+    context = prefix_text + task_text
     answer = ""
     incremental = (reuse_cache and hasattr(runner, "feed")
                    and hasattr(runner, "generate_next"))
     seen: dict[tuple, str] = {}
     if incremental:
-        runner.feed(context, add_bos=True)
+        loaded = False
+        cache_path = None
+        if kv_cache_dir and hasattr(runner, "save_state") and hasattr(runner, "load_state"):
+            prefix_ids = runner._encode(prefix_text)
+            seed = f"{getattr(runner, 'model_tag', '')}|{len(prefix_ids)}|"
+            key = hashlib.sha1(seed.encode()
+                               + ",".join(map(str, prefix_ids)).encode()).hexdigest()[:16]
+            os.makedirs(kv_cache_dir, exist_ok=True)
+            cache_path = os.path.join(kv_cache_dir, f"prefix_{key}.npz")
+            if runner.load_state(cache_path) and runner.fed_ids == prefix_ids:
+                loaded = True
+                if verbose:
+                    print(f"  ♻️  loaded KV prefix cache ({len(prefix_ids)} tokens)", flush=True)
+            else:
+                runner.reset()
+        if not loaded:
+            runner.feed(prefix_text, add_bos=True)
+            if cache_path:
+                runner.save_state(cache_path)
+        runner.feed(task_text)
 
     for step in range(max_steps):
         step_start = getattr(runner, "pos", 0)
