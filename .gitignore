@@ -132,3 +132,10 @@ site/manuals.html
 .project-validation/
 projects/*/solution/output/
 projects/*/solution/demo-output/
+
+# NanoLang research track (local) — build artifacts and generated models.
+# Sources are tracked; outputs are reproducible from the phase Makefiles and
+# the convert_*.py scripts, so they never belong in git.
+*.o
+*.nanow
+phase*/bin/
