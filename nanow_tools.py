@@ -305,7 +305,16 @@ class ToolRegistry:
     def names(self) -> list[str]:
         return sorted(self._tools)
 
-    def describe(self) -> str:
+    def describe(self, compact: bool = False) -> str:
+        """Tool list for the prompt.
+
+        ``compact`` drops the per-tool gloss and the protocol hint (which then
+        lives in the header). The gloss is what teaches a *human*; the model
+        only needs the name and its parameter names, so the long form costs
+        ~100 tokens of prefill for no measurable selection benefit.
+        """
+        if compact:
+            return "Tools:\n" + " ".join(self.signature(n) for n in self.names)
         lines = ["Available tools (call with: TOOL: <name> {\"arg\": value}):"]
         for name in self.names:
             summary, params, dangerous, _ = self._tools[name]
@@ -518,14 +527,39 @@ FEWSHOT = (
     "Answer: Done. I appended ' bye' to hello.txt.\n"
 )
 
+# One example carries the format; the other two mostly repeat it. With
+# constrained decoding forcing the tool name and its argument keys, the model
+# does not need three demonstrations to learn the pattern.
+COMPACT_FEWSHOT = (
+    "Example\n"
+    "Task: read the file notes.txt\n"
+    'TOOL: read_file {"path": "notes.txt"}\n'
+    "Observation: [ok] the secret word is PINEAPPLE\n"
+    "Answer: The file says: the secret word is PINEAPPLE.\n"
+)
+
 
 def build_agent_prompt_parts(registry: ToolRegistry, task: str,
-                             fewshot: bool = True) -> tuple[str, str]:
+                             fewshot: bool = True,
+                             compact: bool = False) -> tuple[str, str]:
     """Return ``(static_prefix, task_suffix)`` for the agent prompt.
 
     The prefix holds the tool preamble and few-shot examples; it does not depend
     on the task, so it is the part worth caching a KV prefill for.
+
+    ``compact`` shrinks that prefix from ~444 to ~230 tokens (shorter header,
+    one-line tool list, a single worked example), which cuts the one-time
+    prefill and the on-disk cache proportionally.
     """
+    if compact:
+        prefix = (
+            "You are an agent with tools.\n"
+            'Reply with one line: TOOL: <name> {"arg": "value"}\n'
+            "or the final answer. Wait for Observation after each call.\n\n"
+            + registry.describe(compact=True) + "\n\n"
+            + (COMPACT_FEWSHOT + "\n" if fewshot else "")
+        )
+        return prefix, f"Task: {task}\n"
     prefix = (
         "You are an agent that can use tools.\n"
         f"{registry.describe()}\n\n"
@@ -686,7 +720,8 @@ def run_agent(runner, registry: ToolRegistry, task: str, max_steps: int = 3,
               top_p: float = 0.9, verbose: bool = True, prime: bool = False,
               constrained: bool = False, constrained_args: bool = False,
               planner: str = "model", reuse_cache: bool = True,
-              kv_cache_dir: Optional[str] = None) -> dict:
+              kv_cache_dir: Optional[str] = None,
+              compact: bool = False) -> dict:
     """Drive the model through tool-use steps until it answers or runs out.
 
     The tiny model rarely emits a perfect call, so the loop is deliberately
@@ -711,6 +746,10 @@ def run_agent(runner, registry: ToolRegistry, task: str, max_steps: int = 3,
     a later run with the same tools skips its prefill entirely (the prefix is
     the tool preamble plus few-shot, which is the expensive, task-independent
     part).
+
+    ``compact`` builds the short prefix variant (see
+    :func:`build_agent_prompt_parts`), trading prompt length for a much cheaper
+    one-time prefill.
     """
     transcript, calls = [], []
 
@@ -740,7 +779,7 @@ def run_agent(runner, registry: ToolRegistry, task: str, max_steps: int = 3,
             return {"task": task, "answer": "", "calls": [], "transcript": [],
                     "planner": "route"}
 
-    prefix_text, task_text = build_agent_prompt_parts(registry, task)
+    prefix_text, task_text = build_agent_prompt_parts(registry, task, compact=compact)
     context = prefix_text + task_text
     answer = ""
     incremental = (reuse_cache and hasattr(runner, "feed")

@@ -409,6 +409,11 @@ def ternary_matmul(x: np.ndarray, W_ternary: np.ndarray, scale: float,
     return scale * (x @ W_f32.T)
 
 
+# Elementwise ops carried by the phase0 C library. All four are compiled in;
+# the runner may still route any of them to NumPy by trimming ``ew_ops``.
+DEFAULT_EW_OPS = frozenset({"rmsnorm", "rope", "silu", "softmax"})
+
+
 class TernaryKernel:
     """ctypes binding to phase0's ternary GEMV kernels.
 
@@ -608,10 +613,11 @@ class SmolLM2Runner:
         self.pos = 0
         self.fed_ids: list[int] = []
         self._last_logits = None
-        # Only the ops where the scalar C kernel beats NumPy's vectorised exp
-        # (RMSNorm, RoPE). SiLU/softmax stay on NumPy: scalar expf loses to
-        # SIMD exp there, and we refuse to approximate exp to win it back.
-        self.ew_ops = {"rmsnorm", "rope"}
+        # All four elementwise ops route to C. SiLU and softmax only became a
+        # win once the kernel carried its own AVX2 exp (poly exp, ~1e-7 rel
+        # error, i.e. the float32 floor) rather than scalar expf, which lost to
+        # NumPy's vectorised exp. Measured 1.9x-2.6x per op; see ROADMAP 7.7.
+        self.ew_ops = set(DEFAULT_EW_OPS)
 
     def reset(self):
         self.kv_cache = [{"k": None, "v": None} for _ in range(self.n_layers)]
@@ -1103,6 +1109,20 @@ class SmolLM2Runner:
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+def resolve_compact(style: str, constrained: bool, constrained_args: bool) -> bool:
+    """Whether the agent should use the compact prompt prefix.
+
+    Prompt size is tied to the decoding mode because that is what the
+    measurement supports: with a constrained or schema-forced call the compact
+    prefix matches the full one (9/10 vs 9/10 tool-name accuracy) at roughly a
+    third of the prefill, while free generation still needs the long few-shot
+    (5/8 vs 1/8). See ROADMAP section 7.7.
+    """
+    if style == "auto":
+        return bool(constrained or constrained_args)
+    return style == "compact"
+
+
 def main():
     parser = argparse.ArgumentParser(description="SmolLM2-135M NanoLang Inference")
     parser.add_argument("--model", default="models/smollm2/smollm2-135m.nanow",
@@ -1147,10 +1167,12 @@ def main():
                         help="Who chooses the tool: model | route (deterministic) | hybrid")
     parser.add_argument("--no-cache", action="store_true",
                         help="Disable KV-cache reuse across agent steps")
-    parser.add_argument("--no-ew", action="store_true",
-                        help="Disable the C elementwise kernels (RMSNorm/RoPE) and use the NumPy reference")
+    parser.add_argument("--ew", choices=["auto", "all", "off"], default="auto",
+                        help="Elementwise kernels: auto/all = C (RMSNorm/RoPE/SiLU/softmax), off = NumPy reference")
     parser.add_argument("--kv-cache-dir", default=None,
                         help="Persist the static prompt-prefix KV cache here to skip its prefill on later runs")
+    parser.add_argument("--prompt-style", choices=["auto", "full", "compact"], default="auto",
+                        help="Agent preamble size: auto = compact under constrained decoding, full otherwise")
     args = parser.parse_args()
 
     np.random.seed(args.seed)
@@ -1215,8 +1237,11 @@ def main():
     # Create runner
     runner = SmolLM2Runner(tensors, config, tokenizer, kernel=kernel)
     runner.model_tag = args.model
-    if args.no_ew:
+    if args.ew == "off":
         runner.ew_ops = set()
+
+    compact = resolve_compact(args.prompt_style, args.constrained,
+                              args.constrained_args)
 
     # --- Agent mode: tool-use loop (file CRUD, bash, HTTP, web search) ---
     if args.agent:
@@ -1231,6 +1256,8 @@ def main():
               f"{'off' if args.no_cache else 'on'}")
         print(f"     Constrained: {'args' if args.constrained_args else ('name' if args.constrained else 'off')}")
         print(f"     Tools: {', '.join(registry.names)}", flush=True)
+        print(f"     Prompt: {'compact' if compact else 'full'}"
+              f"   Prefix cache: {args.kv_cache_dir or 'off'}", flush=True)
 
         outcome = run_agent(runner, registry, args.prompt, max_steps=args.max_steps,
                             step_tokens=args.step_tokens, temperature=args.temp,
@@ -1239,7 +1266,8 @@ def main():
                             constrained_args=args.constrained_args,
                             planner=args.planner,
                             reuse_cache=not args.no_cache,
-                            kv_cache_dir=args.kv_cache_dir)
+                            kv_cache_dir=args.kv_cache_dir,
+                            compact=compact)
 
         print("\n" + "=" * 70)
         print(" AGENT COMPLETE")

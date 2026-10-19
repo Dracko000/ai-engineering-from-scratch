@@ -342,6 +342,20 @@ class TestElementwiseC(unittest.TestCase):
         np.testing.assert_allclose(got, run.softmax(scores, axis=1),
                                    rtol=1e-5, atol=1e-6)
 
+    def test_silu_mul_matches_across_a_wide_range(self):
+        """Guards the SIMD exp polynomial across the whole clip window."""
+        g = np.linspace(-30.0, 30.0, 513, dtype=np.float32)
+        up = np.ones_like(g)
+        np.testing.assert_allclose(self.k.silu_mul(g, up), run.silu(g) * up,
+                                   rtol=1e-5, atol=1e-6)
+
+    def test_softmax_matches_across_a_wide_range(self):
+        scores = np.linspace(-60.0, 0.0, 257, dtype=np.float32).reshape(1, 257, 1)
+        got = scores.copy()
+        self.k.softmax_axis1(got)
+        np.testing.assert_allclose(got, run.softmax(scores, axis=1),
+                                   rtol=1e-5, atol=1e-7)
+
 
 class FakeEW:
     """Records which elementwise ops the runner routes to C."""
@@ -374,25 +388,38 @@ class TestElementwiseSelection(unittest.TestCase):
         r.kernel = FakeEW()
         return r
 
-    def test_default_routes_rmsnorm_and_rope_to_c(self):
+    def test_default_routes_all_four_ops_to_c(self):
+        self.assertEqual(set(run.DEFAULT_EW_OPS),
+                         {"rmsnorm", "rope", "silu", "softmax"})
         FakeEW.calls = []
-        r = self._stub({"rmsnorm", "rope"})
+        r = self._stub(set(run.DEFAULT_EW_OPS))
         x = np.ones(8, np.float32)
         r._rms(x, x)
         r._rope(np.ones((2, 4), np.float32), np.ones(2, np.float32),
                 np.ones(2, np.float32))
         r._silu_mul(x, x)
         r._softmax_axis1(np.ones((2, 3, 1), np.float32))
-        self.assertIn("rmsnorm", FakeEW.calls)
-        self.assertIn("rope", FakeEW.calls)
-        self.assertNotIn("silu", FakeEW.calls)
-        self.assertNotIn("softmax", FakeEW.calls)
+        self.assertEqual(sorted(set(FakeEW.calls)),
+                         ["rmsnorm", "rope", "silu", "softmax"])
 
     def test_empty_set_uses_numpy_only(self):
         FakeEW.calls = []
         r = self._stub(set())
         r._rms(np.ones(8, np.float32), np.ones(8, np.float32))
         self.assertEqual(FakeEW.calls, [])
+
+
+class TestPromptStyle(unittest.TestCase):
+    """Compact prefix is used only where it measured safe."""
+
+    def test_auto_is_compact_only_when_constrained(self):
+        self.assertTrue(run.resolve_compact("auto", True, False))
+        self.assertTrue(run.resolve_compact("auto", False, True))
+        self.assertFalse(run.resolve_compact("auto", False, False))
+
+    def test_explicit_style_overrides_auto(self):
+        self.assertTrue(run.resolve_compact("compact", False, False))
+        self.assertFalse(run.resolve_compact("full", True, True))
 
 
 if __name__ == "__main__":

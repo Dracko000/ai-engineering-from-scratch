@@ -103,6 +103,29 @@ class TestAgentLoop(unittest.TestCase):
         self.assertTrue(suffix.startswith("Task:"))
         self.assertNotIn("do x", prefix)
 
+    def test_compact_prompt_is_shorter_and_keeps_protocol(self):
+        full_prefix, _ = tools.build_agent_prompt_parts(self.reg, "x")
+        comp_prefix, _ = tools.build_agent_prompt_parts(self.reg, "x", compact=True)
+        self.assertLess(len(comp_prefix), len(full_prefix))
+        self.assertIn("TOOL:", comp_prefix)
+        self.assertIn("Observation:", comp_prefix)
+        self.assertEqual(comp_prefix.count("Task:"), 1)  # a single worked example
+
+    def test_compact_describe_omits_gloss_but_keeps_signatures(self):
+        comp = self.reg.describe(compact=True)
+        self.assertIn("read_file(path)", comp)
+        self.assertNotIn("Read a UTF-8 text file", comp)
+        self.assertIn("Read a UTF-8 text file", self.reg.describe())
+
+    def test_run_agent_honours_compact_flag(self):
+        runner = FakeRunner(["no tool here"])
+        tools.run_agent(runner, self.reg, "noop", compact=True, verbose=False)
+        self.assertIn("You are an agent with tools.", runner.prompts[0])
+        self.assertNotIn("Available tools (call with", runner.prompts[0])
+        full = FakeRunner(["no tool here"])
+        tools.run_agent(full, self.reg, "noop", compact=False, verbose=False)
+        self.assertIn("Available tools (call with", full.prompts[0])
+
     def test_identical_call_repeats_are_deduped(self):
         # A greedy model can latch onto one call; the loop must stop early and
         # answer with the first result instead of re-running the same call.
